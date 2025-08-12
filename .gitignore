@@ -187,3 +187,8 @@ forecast_alerts_*
 forecast_performance_summary_*
 bid_validation_detailed_*
 chronic_forecast_errors_*
+
+# Temporary/build files
+run
+*.tmp
+*.temp
