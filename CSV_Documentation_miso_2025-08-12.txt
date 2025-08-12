@@ -1,0 +1,138 @@
+
+=== CSV OUTPUT FILES DOCUMENTATION ===
+
+The generator analysis system produces multiple CSV files, each providing specific insights:
+
+1. ENHANCED all_generators_{market}.csv
+   ================================
+   Source: /miso/cluster_generations.csv API + ResourceDB enhancement
+   Purpose: Complete generator inventory with identification and current status
+   
+   Key Columns & Insights:
+   - uid: Unique generator identifier
+   - plant_id: EIA plant identification number
+   - unit_id: EIA unit identifier (or MULTI_X_UNITS for multi-unit resources)
+   - total_units: Number of units in the resource
+   - multi_unit: Boolean indicating if resource has multiple units
+   - label: Human-readable generator name with unit details
+   - pmax: Maximum generation capacity (MW) - Design capacity limit
+   - generation: Current/recent actual generation (MW) - Real-time output
+   - fuel_type: Primary fuel source(s)
+   - quality_tag: Data quality indicator from upstream API
+     * VERY_GOOD: Fresh, complete, reliable data
+     * GOOD: Generally reliable with minor gaps
+     * AVERAGE: Some data quality issues
+     * BAD: Significant data quality concerns
+   - time_stamp: Data freshness timestamp
+   
+   What it teaches us:
+   - Generator capacity utilization (generation/pmax ratio)
+   - Data reliability for analysis purposes
+   - Multi-unit vs single-unit operational patterns
+   - Real-time market participation
+
+2. generator_forecast_ranked_{market}_{date}.csv
+   ===============================================
+   Purpose: Comprehensive generator performance ranking and metrics
+   
+   Key Insights by Column:
+   - performance_score (0-100): Overall forecast quality ranking
+   - performance_classification: Excellent/Good/Fair/Poor/Critical
+   - RMSE_over_generation: Root Mean Square Error in MW
+   - rmse_percentage_of_capacity: RMSE as % of generator capacity
+   - R_SQUARED: Forecast correlation strength (0-1)
+   - consistency_score: Forecast reliability over time
+   - volatility_score: Forecast error stability
+   - trend_direction: improving/stable/deteriorating
+   - must_run: Operational constraint classification
+   - bid_forecast_correlation: Strategic bid alignment
+   
+   What it teaches us:
+   - Which generators consistently under/over-perform
+   - Capacity-relative performance (small vs large generators)
+   - Operational vs market-driven forecast errors
+   - Strategic bidding alignment with forecasts
+
+3. generator_anomaly_alerts_{market}_{date}.csv
+   ==============================================
+   Purpose: Generators with significant performance issues
+   
+   Key Insights:
+   - Chronic error patterns (1+ problematic days in 2-day sliding window, 5+ days in 7-day for high severity)
+   - Statistical outliers (Z-score > 2.0)
+   - Performance degradation trends
+   - Multi-unit coordination issues
+   
+   What it teaches us:
+   - Generators needing immediate attention
+   - Systematic vs random forecast errors
+   - Operational constraint misalignment
+   - Market condition sensitivity
+
+4. forecast_alerts_{market}_{date}.csv
+   ===================================
+   Purpose: Actionable alerts with severity levels and recommendations
+   
+   Alert Types:
+   - POOR_FORECAST_PERFORMANCE: General accuracy issues
+   - CHRONIC_OVERFORECASTING: Persistent optimistic bias (1+ days in 2-day window, 5+ days in 7-day for high severity)
+   - CHRONIC_UNDERFORECASTING: Persistent conservative bias (1+ days in 2-day window, 5+ days in 7-day for high severity)
+   
+   Severity Levels:
+   - CRITICAL: Immediate intervention required
+   - HIGH: Review within 24-48 hours
+   - MEDIUM: Monitor and investigate
+   - LOW: Informational tracking
+   
+   What it teaches us:
+   - Prioritized action items for operations teams
+   - Specific improvement recommendations
+   - Historical error pattern context
+   - Business impact assessment
+
+5. chronic_forecast_errors_{market}_{date}.csv
+   =============================================
+   Purpose: Persistent forecast bias patterns
+   
+   Specialized Insights:
+   - Duration and magnitude of chronic errors
+   - Market condition correlation
+   - Operational constraint violations
+   - Financial impact of systematic bias
+   
+6. Batch Files (generator_analyzer_{market}_{batch}_{date}.csv)
+   ===========================================================
+   Purpose: Detailed timeseries data for deep analysis
+   
+   Granular Insights:
+   - Hour-by-hour actual vs forecast comparison
+   - Market condition correlation
+   - Operational constraint binding analysis
+   - Weather and demand sensitivity patterns
+
+=== QUALITY TAG DETERMINATION ===
+
+The quality_tag in all_generators_{market}.csv is determined by the upstream API 
+(/miso/cluster_generations.csv) based on:
+- Data recency (time since last update)
+- Data completeness (missing data points)
+- Sensor reliability scores
+- Historical consistency metrics
+- Communication system status
+
+VERY_GOOD: <5 min delay, <1% missing data, high sensor reliability
+GOOD: <15 min delay, <5% missing data, good sensor reliability  
+AVERAGE: <60 min delay, <10% missing data, moderate sensor reliability
+BAD: >60 min delay, >10% missing data, poor sensor reliability
+
+=== ANALYSIS INSIGHTS ===
+
+Combining these files enables:
+1. Capacity factor analysis (generation/pmax trends)
+2. Forecast accuracy benchmarking
+3. Operational constraint identification
+4. Market participation optimization
+5. Revenue impact quantification
+6. Predictive maintenance indicators
+7. Strategic bidding improvements
+        

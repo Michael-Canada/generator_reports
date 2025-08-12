@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>README</title>
+  <style>
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      background-color: #1a1a1a;
+      border: none;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+</head>
+<body>
+<h1 id="generator-analysis-bid-validation-system">Generator Analysis
+&amp; Bid Validation System</h1>
+<p>A comprehensive Python-based system for analyzing generator forecast
+performance and validating bid configurations across multiple power
+markets (MISO, SPP, ERCOT, PJM).</p>
+<h2 id="overview">Overview</h2>
+<p>This system provides two integrated capabilities:</p>
+<ol type="1">
+<li><strong>Generator Forecast Analysis</strong>: Weekly analysis tool
+that compares actual generation vs forecast generation to identify poor
+performing forecasts and anomalies</li>
+<li><strong>Bid Validation</strong>: Comprehensive validation tests for
+generator supply curves (bids) to identify potential configuration
+issues</li>
+</ol>
+<h3 id="key-features">Key Features</h3>
+<ul>
+<li><strong>Multi-Market Support</strong>: MISO, SPP, ERCOT, and PJM
+markets</li>
+<li><strong>Advanced Anomaly Detection</strong>: Statistical analysis to
+identify chronic over/under-forecasting patterns</li>
+<li><strong>Bid Configuration Validation</strong>: Automated tests for
+bid consistency and compliance</li>
+<li><strong>Parallel Processing</strong>: Efficient batch processing for
+large datasets</li>
+<li><strong>Integration Ready</strong>: Modular design for easy
+integration into existing workflows</li>
+<li><strong>Comprehensive Reporting</strong>: Detailed CSV outputs and
+executive summaries</li>
+</ul>
+<h2 id="system-architecture">System Architecture</h2>
+<h3 id="core-modules">Core Modules</h3>
+<h4 id="generator-analysis-auto_weekly_generator_analyzer2.py">Generator
+Analysis (<code>Auto_weekly_generator_analyzer2.py</code>)</h4>
+<p>The main analysis engine that processes generator forecast data and
+identifies performance issues.</p>
+<p><strong>Key Classes:</strong> - <code>GeneratorAnalyzer</code>: Main
+analysis class with batch processing capabilities - <code>Config</code>:
+Centralized configuration management - <code>ForecastPerformance</code>:
+Performance classification enum - <code>AnomalyMetrics</code>: Data
+structure for anomaly detection results</p>
+<p><strong>Key Features:</strong> - RMSE, MAE, R-squared calculation -
+Z-score based anomaly detection - Performance classification (excellent
+→ critical) - Chronic error pattern detection - Market-specific
+configuration</p>
+<h4 id="bid-validation-bid_validation.py">Bid Validation
+(<code>bid_validation.py</code>)</h4>
+<p>Comprehensive bid validation engine with multiple validation
+tests.</p>
+<p><strong>Key Classes:</strong> - <code>BidValidator</code>: Core
+validation engine - <code>BidValidationResult</code>: Individual
+validation result data structure - <code>BidValidationType</code>:
+Enumeration of validation test types - <code>BidValidationLevel</code>:
+Severity classification</p>
+<p><strong>Validation Tests:</strong> 1. <strong>First Block vs
+Pmin</strong>: Ensures first bid block ≥ generator Pmin 2. <strong>Last
+Block vs Generation</strong>: Validates maximum bid quantity vs
+historical generation 3. <strong>Bid Curve Consistency</strong>: Checks
+for monotonic quantities and reasonable price jumps 4. <strong>Missing
+Bid Data</strong>: Detects generators with empty blocks arrays or
+missing from supply curves entirely</p>
+<h4 id="integration-module-bid_validation_integration.py">Integration
+Module (<code>bid_validation_integration.py</code>)</h4>
+<p>Seamless integration helpers for existing workflows.</p>
+<p><strong>Key Functions:</strong> -
+<code>add_bid_validation_to_analyzer()</code>: Adds bid validation to
+GeneratorAnalyzer -
+<code>enhance_final_reports_with_bid_validation()</code>: Integrates
+results into reports -
+<code>create_enhanced_config_with_bid_validation()</code>: Configuration
+helpers</p>
+<h2 id="installation-setup">Installation &amp; Setup</h2>
+<h3 id="prerequisites">Prerequisites</h3>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Core dependencies</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install pandas numpy scipy google-cloud-storage requests tqdm joblib</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># For development</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install pytest jupyter matplotlib seaborn</span></code></pre></div>
+<h3 id="environment-setup">Environment Setup</h3>
+<ol type="1">
+<li><strong>Google Cloud Authentication</strong>:</li>
+</ol>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Set up service account credentials</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="bu">export</span> <span class="va">GOOGLE_APPLICATION_CREDENTIALS</span><span class="op">=</span><span class="st">&quot;path/to/service-account-key.json&quot;</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Or use application default credentials</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="ex">gcloud</span> auth application-default login</span></code></pre></div>
+<ol start="2" type="1">
+<li><strong>API Access</strong>:</li>
+</ol>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Set up Marginal Unit API credentials</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="bu">export</span> <span class="va">MU_API_AUTH</span><span class="op">=</span><span class="st">&quot;username:password&quot;</span></span></code></pre></div>
+<ol start="3" type="1">
+<li><strong>Configuration</strong>:
+<ul>
+<li>Update <code>Config</code> class in
+<code>Auto_weekly_generator_analyzer2.py</code></li>
+<li>Set market, batch size, and thresholds</li>
+<li>Configure GCS bucket paths</li>
+</ul></li>
+</ol>
+<h2 id="usage">Usage</h2>
+<h3 id="quick-start---generator-analysis">Quick Start - Generator
+Analysis</h3>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> Auto_weekly_generator_analyzer2 <span class="im">import</span> GeneratorAnalyzer, Config</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Initialize with configuration</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>config <span class="op">=</span> Config()</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>analyzer <span class="op">=</span> GeneratorAnalyzer(config)</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Run analysis for all generators</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>analyzer.run_batch_analysis()</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Get results</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>results <span class="op">=</span> analyzer.get_final_summary()</span></code></pre></div>
+<h3 id="quick-start---bid-validation">Quick Start - Bid Validation</h3>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> bid_validation <span class="im">import</span> BidValidator</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Initialize validator</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>validator <span class="op">=</span> BidValidator(market<span class="op">=</span><span class="st">&quot;miso&quot;</span>)</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Load data and run validation</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>validator.load_cloud_data()</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>results <span class="op">=</span> validator.run_comprehensive_validation()</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="co"># View results</span></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;Found </span><span class="sc">{</span><span class="bu">len</span>(results)<span class="sc">}</span><span class="ss"> validation issues&quot;</span>)</span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>validator.save_results(<span class="st">&quot;validation_results&quot;</span>)</span></code></pre></div>
+<h3 id="integrated-usage">Integrated Usage</h3>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> Auto_weekly_generator_analyzer2 <span class="im">import</span> GeneratorAnalyzer, Config</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> bid_validation_integration <span class="im">import</span> add_bid_validation_to_analyzer</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Initialize analyzer with bid validation</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>config <span class="op">=</span> Config()</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>config.BID_VALIDATION[<span class="st">&#39;enable_bid_validation&#39;</span>] <span class="op">=</span> <span class="va">True</span></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>analyzer <span class="op">=</span> GeneratorAnalyzer(config)</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>add_bid_validation_to_analyzer(analyzer)</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Run comprehensive analysis</span></span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a>analyzer.run_batch_analysis()  <span class="co"># Includes both forecast and bid analysis</span></span></code></pre></div>
+<h2 id="configuration">Configuration</h2>
+<h3 id="market-configuration">Market Configuration</h3>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Config:</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Market selection</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    MARKET <span class="op">=</span> <span class="st">&quot;miso&quot;</span>  <span class="co"># Options: &quot;miso&quot;, &quot;spp&quot;, &quot;ercot&quot;, &quot;pjm&quot;</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Market-specific settings</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>    MARKET_CONFIGS <span class="op">=</span> {</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;miso&quot;</span>: {</span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;collection&quot;</span>: <span class="st">&quot;miso-se&quot;</span>,</span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;timezone_offset&quot;</span>: <span class="st">&quot;T04:00:00-05:00&quot;</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>        },</span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>        <span class="co"># ... other markets</span></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a>    }</span></code></pre></div>
+<h3 id="performance-thresholds">Performance Thresholds</h3>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Anomaly detection configuration</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>ANOMALY_DETECTION <span class="op">=</span> {</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;rmse_threshold_zscore&quot;</span>: <span class="fl">2.0</span>,</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;performance_thresholds&quot;</span>: {</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;excellent&quot;</span>: {<span class="st">&quot;rmse_pct_max&quot;</span>: <span class="fl">2.0</span>, <span class="st">&quot;r2_min&quot;</span>: <span class="fl">0.95</span>},</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;good&quot;</span>: {<span class="st">&quot;rmse_pct_max&quot;</span>: <span class="fl">5.0</span>, <span class="st">&quot;r2_min&quot;</span>: <span class="fl">0.85</span>},</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;fair&quot;</span>: {<span class="st">&quot;rmse_pct_max&quot;</span>: <span class="fl">10.0</span>, <span class="st">&quot;r2_min&quot;</span>: <span class="fl">0.70</span>},</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;poor&quot;</span>: {<span class="st">&quot;rmse_pct_max&quot;</span>: <span class="fl">20.0</span>, <span class="st">&quot;r2_min&quot;</span>: <span class="fl">0.50</span>},</span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;critical&quot;</span>: {<span class="st">&quot;rmse_pct_max&quot;</span>: <span class="bu">float</span>(<span class="st">&#39;inf&#39;</span>), <span class="st">&quot;r2_min&quot;</span>: <span class="fl">0.0</span>}</span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>    }</span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<h3 id="bid-validation-configuration">Bid Validation Configuration</h3>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>BID_VALIDATION <span class="op">=</span> {</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;enable_bid_validation&#39;</span>: <span class="va">True</span>,</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;validation_thresholds&#39;</span>: {</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;pmin_tolerance&#39;</span>: <span class="fl">0.05</span>,          <span class="co"># 5% tolerance for pmin validation</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;generation_percentile&#39;</span>: <span class="dv">80</span>,      <span class="co"># Use 80th percentile for generation checks</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;pmax_ratio_threshold&#39;</span>: <span class="fl">0.9</span>,      <span class="co"># 90% of pmax threshold</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;price_jump_factor&#39;</span>: <span class="fl">10.0</span>,        <span class="co"># Maximum reasonable price jump factor</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;min_data_points&#39;</span>: <span class="dv">168</span>,           <span class="co"># Minimum hours of generation data</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;lookback_hours&#39;</span>: <span class="dv">1000</span>,           <span class="co"># Hours to look back for analysis</span></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>    }</span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<h2 id="output-files">Output Files</h2>
+<h3 id="generator-analysis-outputs">Generator Analysis Outputs</h3>
+<ul>
+<li><code>generator_analyzer_{market}_{batch}_{date}.csv</code>:
+Detailed timeseries data</li>
+<li><code>generator_forecast_stats_{market}_{batch}_{date}.csv</code>:
+Summary statistics</li>
+<li><code>generator_anomalies_{market}_{batch}_{date}.csv</code>:
+Anomaly detection results</li>
+<li><code>forecast_performance_summary_{market}_{date}.csv</code>:
+Executive summary</li>
+</ul>
+<h3 id="bid-validation-outputs">Bid Validation Outputs</h3>
+<ul>
+<li><code>bid_validation_results_{date}.csv</code>: Detailed validation
+results</li>
+<li><code>bid_validation_summary_{date}.csv</code>: Summary statistics
+by validation type</li>
+<li><code>bid_validation_critical_{date}.csv</code>: Critical issues
+requiring immediate attention</li>
+</ul>
+<h2 id="data-sources">Data Sources</h2>
+<h3 id="google-cloud-storage">Google Cloud Storage</h3>
+<ul>
+<li><strong>Bucket</strong>:
+<code>marginalunit-placebo-metadata</code></li>
+<li><strong>Resources</strong>: Generator capacity and metadata
+(<code>resources.json</code>)</li>
+<li><strong>Supply Curves</strong>: Bid block data
+(<code>supply_curves.json</code>)</li>
+</ul>
+<h3 id="api-endpoints">API Endpoints</h3>
+<ul>
+<li><strong>Base URL</strong>:
+<code>https://api1.marginalunit.com/muse/api</code></li>
+<li><strong>Generation Data</strong>:
+<code>/reflow/data/generation</code></li>
+<li><strong>Forecast Data</strong>:
+<code>/reflow/data/forecast</code></li>
+</ul>
+<h3 id="market-collections">Market Collections</h3>
+<ul>
+<li><strong>MISO</strong>: <code>miso-se</code></li>
+<li><strong>SPP</strong>: <code>spp-se</code></li>
+<li><strong>ERCOT</strong>: <code>ercot-rt-se</code></li>
+<li><strong>PJM</strong>: <code>pjm-se</code></li>
+</ul>
+<h2 id="performance-optimization">Performance Optimization</h2>
+<h3 id="parallel-processing">Parallel Processing</h3>
+<ul>
+<li>Configurable batch sizes (default: 200 generators)</li>
+<li>Multi-threading support (default: 4 workers)</li>
+<li>Memory-efficient data loading</li>
+</ul>
+<h3 id="caching-strategy">Caching Strategy</h3>
+<ul>
+<li>GCS data caching for repeated analysis</li>
+<li>API response caching with TTL</li>
+<li>Incremental processing support</li>
+</ul>
+<h3 id="resource-management">Resource Management</h3>
+<ul>
+<li>Automatic memory cleanup</li>
+<li>Progress tracking with <code>tqdm</code></li>
+<li>Graceful error handling</li>
+</ul>
+<h2 id="development">Development</h2>
+<h3 id="project-structure">Project Structure</h3>
+<pre><code>generator_analysis/
+├── Auto_weekly_generator_analyzer2.py    # Main analysis engine
+├── bid_validation.py                     # Bid validation core
+├── bid_validation_integration.py         # Integration helpers
+├── bid_validation_example.py             # Usage examples
+├── README.md                             # This file
+├── BID_VALIDATION_README.md              # Detailed bid validation docs
+├── SYSTEM_KNOWLEDGE_BASE.md              # Comprehensive system knowledge
+└── *.csv                                 # Data and output files</code></pre>
+<h3 id="testing">Testing</h3>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run basic system test</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> bid_validation_example.py</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Test core components</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-c</span> <span class="st">&quot;from bid_validation import BidValidator; print(&#39;✅ Import successful&#39;)&quot;</span></span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-c</span> <span class="st">&quot;from Auto_weekly_generator_analyzer2 import GeneratorAnalyzer; print(&#39;✅ Import successful&#39;)&quot;</span></span></code></pre></div>
+<h3 id="extensions">Extensions</h3>
+<p>The system is designed for extensibility:</p>
+<ol type="1">
+<li><strong>Custom Validation Rules</strong>: Extend
+<code>BidValidator</code> class</li>
+<li><strong>Additional Markets</strong>: Add market configs to
+<code>MARKET_CONFIGS</code></li>
+<li><strong>New Metrics</strong>: Extend <code>AnomalyMetrics</code>
+dataclass</li>
+<li><strong>Custom Reporting</strong>: Override report generation
+methods</li>
+</ol>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="common-issues">Common Issues</h3>
+<ol type="1">
+<li><strong>GCS Authentication</strong>: Ensure credentials are properly
+configured</li>
+<li><strong>API Rate Limits</strong>: Implement retry logic for
+production use</li>
+<li><strong>Memory Usage</strong>: Reduce batch sizes for large
+datasets</li>
+<li><strong>Missing Data</strong>: Check generator names and date
+ranges</li>
+</ol>
+<h3 id="performance-tips">Performance Tips</h3>
+<ol type="1">
+<li>Use appropriate batch sizes based on available memory</li>
+<li>Enable parallel processing for large datasets</li>
+<li>Cache frequently accessed data</li>
+<li>Monitor API usage and implement rate limiting</li>
+</ol>
+<h2 id="contributing">Contributing</h2>
+<ol type="1">
+<li>Follow existing code patterns and documentation standards</li>
+<li>Add tests for new functionality</li>
+<li>Update documentation for new features</li>
+<li>Ensure backwards compatibility</li>
+</ol>
+<h2 id="support">Support</h2>
+<p>For technical issues: 1. Check <code>SYSTEM_KNOWLEDGE_BASE.md</code>
+for detailed troubleshooting 2. Review
+<code>BID_VALIDATION_README.md</code> for bid validation specifics 3.
+Examine example usage in <code>bid_validation_example.py</code></p>
+<hr />
+<p><strong>Last Updated</strong>: August 9, 2025<br />
+<strong>Version</strong>: 2.0 with integrated bid validation<br />
+<strong>Supported Markets</strong>: MISO, SPP, ERCOT, PJM</p>
+</body>
+</html>
