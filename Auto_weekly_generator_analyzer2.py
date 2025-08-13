@@ -7,8 +7,8 @@
 # Set FULL_PRODUCTION_RUN = 20 for analysis of all generators with capacity >= 20 MW
 #
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = 700  # User optimized setting - was 1200, changed back to user preference
-RUN_BID_VALIDATION = True   # User enabled setting - was False, changed back to user preference
+MIN_MW_TO_BE_ANALYZED = 500  # User optimized setting - was 1200, changed back to user preference
+RUN_BID_VALIDATION = False   # User enabled setting - was False, changed back to user preference
 # ===============================================================
 
 """
@@ -99,6 +99,7 @@ class ForecastAnomalyType(Enum):
     POOR_GENERAL_PERFORMANCE = "poor_general_performance"
     HIGH_RMSE_ZSCORE = "high_rmse_zscore"
     LOW_CONSISTENCY = "low_consistency"
+    PMAX_DISCREPANCY = "pmax_discrepancy"  # Added for Pmax data synchronization issues
 
 
 ## added ## - Data structure for anomaly detection
@@ -184,10 +185,10 @@ class Config:
     MONTHS_BACK = 6
     WEEKS_BACK = 6
 
-    # PDF Report filtering - excludes generators that meet ALL three criteria:
+    # PDF Report filtering - excludes generators that meet BOTH criteria:
     # 1. Pmax < MIN_CAPACITY_MW_FOR_REPORTS AND
-    # 2. Highest actual generation < MIN_CAPACITY_MW_FOR_REPORTS AND
-    # 3. Highest predicted generation < MIN_CAPACITY_MW_FOR_REPORTS
+    # 2. Highest actual generation < MIN_CAPACITY_MW_FOR_REPORTS
+    # Note: Highest predicted generation is NOT used as a filtering criterion
     MIN_CAPACITY_MW_FOR_REPORTS = MIN_MW_TO_BE_ANALYZED  # Minimum capacity/generation (MW) threshold for PDF report inclusion
 
     # Anomaly detection thresholds
@@ -216,12 +217,16 @@ class Config:
         "chronic_error_detection": {
             "min_days_in_window": 3,  # Minimum problematic days in window (3 out of 5)
             "window_size": 5,  # Size of sliding window to check
-            "high_severity_min_days": 6,  # Minimum problematic days for high severity (6 out of 8)
-            "high_severity_window": 8,  # Window size for high severity check
             "overforecast_ratio_threshold": 2.0,  # Forecast > 2x actual
             "underforecast_ratio_threshold": 0.5,  # Forecast < 0.5x actual
             "min_generation_threshold": 5.0,  # Minimum MW to consider (avoid div by zero)
             "min_hours_per_day": 2,  # Minimum hours of data per day to count (adjusted for 3x daily sampling)
+        },
+        ## Added ## - Pmax discrepancy validation
+        "pmax_discrepancy_detection": {
+            "percentage_threshold": 5.0,  # Flag if difference > 5%
+            "min_capacity_for_check": 10.0,  # Only check generators >= 10 MW
+            "alert_threshold": 10.0,  # Create high priority alert if difference > 10%
         },
     }
 
@@ -726,6 +731,13 @@ class AnomalyDetector:
                 if generator_data is not None:
                     chronic_errors = self.detect_chronic_forecast_errors(generator_data)
 
+            ## Added ## - Check for Pmax discrepancy
+            pmax_discrepancy_alert = None
+            if row.get("pmax_discrepancy_flag", False):
+                pmax_discrepancy_alert = self._create_pmax_discrepancy_alert(
+                    orig_name, main_name, plant_id, unit_id, row
+                )
+
             # Create anomaly record if significant
             is_anomaly = (
                 rmse_zscore > self.config.ANOMALY_DETECTION["rmse_threshold_zscore"]
@@ -733,6 +745,7 @@ class AnomalyDetector:
                 or performance
                 in [ForecastPerformance.POOR, ForecastPerformance.CRITICAL]
                 or len(chronic_errors) > 0
+                or row.get("pmax_discrepancy_flag", False)  # Added Pmax discrepancy check
             )
 
             if is_anomaly:
@@ -755,6 +768,12 @@ class AnomalyDetector:
                     "analysis_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "chronic_errors_detected": len(chronic_errors),
                     "chronic_error_details": chronic_errors,
+                    ## Added ## - Pmax discrepancy information
+                    "pmax_discrepancy_flag": row.get("pmax_discrepancy_flag", False),
+                    "pmax_discrepancy_percentage": row.get("pmax_discrepancy_percentage", None),
+                    "pmax_discrepancy_mw": row.get("pmax_discrepancy_mw", None),
+                    "pmax_actual": row.get("P_MAX_ACTUAL", None),
+                    "pmax_forecast": row.get("P_MAX_FORECAST", None),
                 }
 
                 anomalies.append(anomaly_record)
@@ -765,6 +784,10 @@ class AnomalyDetector:
                         orig_name, main_name, plant_id, unit_id, chronic_error, row
                     )
                     alerts.append(alert)
+
+                ## Added ## - Create alert for Pmax discrepancy
+                if pmax_discrepancy_alert:
+                    alerts.append(pmax_discrepancy_alert)
 
                 # Create alert if high severity (existing logic)
                 if alert_severity in [AlertSeverity.HIGH, AlertSeverity.CRITICAL]:
@@ -782,8 +805,6 @@ class AnomalyDetector:
         config = self.config.ANOMALY_DETECTION["chronic_error_detection"]
         min_days_in_window = config["min_days_in_window"]
         window_size = config["window_size"]
-        high_severity_min_days = config["high_severity_min_days"]
-        high_severity_window = config["high_severity_window"]
         overforecast_threshold = config["overforecast_ratio_threshold"]
         underforecast_threshold = config["underforecast_ratio_threshold"]
         min_generation = config["min_generation_threshold"]
@@ -858,8 +879,6 @@ class AnomalyDetector:
             "is_overforecast",
             min_days_in_window,
             window_size,
-            high_severity_min_days,
-            high_severity_window,
         )
 
         for period in overforecast_periods:
@@ -886,8 +905,6 @@ class AnomalyDetector:
             "is_underforecast",
             min_days_in_window,
             window_size,
-            high_severity_min_days,
-            high_severity_window,
         )
 
         for period in underforecast_periods:
@@ -916,8 +933,6 @@ class AnomalyDetector:
         condition_col: str,
         min_days_in_window: int,
         window_size: int,
-        high_severity_min_days: int,
-        high_severity_window: int,
     ) -> List[dict]:
         """Find periods where condition is true for min_days_in_window out of window_size days in sliding window."""
         periods = []
@@ -947,44 +962,16 @@ class AnomalyDetector:
                 problematic_data = window_data[window_data[condition_col]]
 
                 if len(problematic_data) > 0:
-                    # Determine severity by checking larger window if needed
-                    severity = "medium"  # default
-                    effective_window_size = window_size
-                    effective_problematic_days = problematic_days
-
-                    # Check for high severity (6+ out of 8 days)
-                    if window_size >= high_severity_window:
-                        # Already looking at 8+ day window
-                        if problematic_days >= high_severity_min_days:
-                            severity = "high"
-                    else:
-                        # Need to check if we can extend window for high severity
-                        extended_start = max(
-                            0, i - (high_severity_window - window_size) // 2
-                        )
-                        extended_end = min(
-                            len(daily_stats_sorted),
-                            extended_start + high_severity_window,
-                        )
-
-                        if extended_end - extended_start >= high_severity_window:
-                            extended_window = daily_stats_sorted.iloc[
-                                extended_start:extended_end
-                            ]
-                            extended_problematic = sum(extended_window[condition_col])
-                            if extended_problematic >= high_severity_min_days:
-                                severity = "high"
-                                # Update to show the larger window for high severity cases
-                                effective_window_size = high_severity_window
-                                effective_problematic_days = extended_problematic
+                    # All chronic errors have medium severity (3 out of 5 days)
+                    severity = "medium"
 
                     periods.append(
                         {
                             "start_date": dates[i],
                             "end_date": dates[window_end - 1],
                             "duration_days": window_size,
-                            "problematic_days": effective_problematic_days,  # Use effective count
-                            "window_days": effective_window_size,  # Use effective window size
+                            "problematic_days": problematic_days,
+                            "window_days": window_size,
                             "avg_ratio": problematic_data["avg_ratio"].mean(),
                             "avg_actual": problematic_data["avg_actual"].mean(),
                             "avg_forecast": problematic_data["avg_forecast"].mean(),
@@ -1097,6 +1084,64 @@ class AnomalyDetector:
                 "URGENT: Pattern persisted for 2+ weeks - immediate model review required"
             )
 
+        return recommendations
+
+    def _create_pmax_discrepancy_alert(
+        self,
+        orig_name: str,
+        main_name: str,
+        plant_id: int,
+        unit_id: str,
+        row: pd.Series,
+    ) -> dict:
+        """Create an alert for Pmax discrepancy between reflow and ResourceDB."""
+        pmax_actual = row.get("P_MAX_ACTUAL", "N/A")
+        pmax_forecast = row.get("P_MAX_FORECAST", "N/A") 
+        discrepancy_pct = row.get("pmax_discrepancy_percentage", 0)
+        discrepancy_mw = row.get("pmax_discrepancy_mw", 0)
+        
+        # Determine severity based on discrepancy percentage
+        config = self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"]
+        if discrepancy_pct >= config["alert_threshold"]:
+            severity = "high"
+        else:
+            severity = "medium"
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            ## Enhanced ## - Complete generator identification
+            "generator": orig_name,
+            "main_name": main_name,
+            "plant_id": plant_id,
+            "unit_id": unit_id,
+            "alert_type": "PMAX_DISCREPANCY",
+            "severity": severity,
+            "message": f"Generator {orig_name} (Plant {plant_id}, Unit {unit_id}): "
+                      f"Pmax discrepancy detected - {discrepancy_pct:.1f}% difference "
+                      f"({discrepancy_mw:.1f} MW) between reflow ({pmax_actual} MW) and ResourceDB ({pmax_forecast} MW)",
+            "details": {
+                "pmax_reflow": pmax_actual,
+                "pmax_resourcedb": pmax_forecast,
+                "discrepancy_mw": discrepancy_mw,
+                "discrepancy_percentage": discrepancy_pct,
+                "threshold_percentage": config["percentage_threshold"],
+            },
+            "recommendations": self._generate_pmax_discrepancy_recommendations(discrepancy_pct),
+        }
+
+    def _generate_pmax_discrepancy_recommendations(self, discrepancy_pct: float) -> List[str]:
+        """Generate recommendations for Pmax discrepancy issues."""
+        recommendations = [
+            "Investigate data synchronization between reflow and ResourceDB systems",
+            "Verify which Pmax value is more accurate for operational planning",
+            "Check for recent capacity changes or unit modifications",
+            "Review generator registration data with market operator",
+        ]
+        
+        if discrepancy_pct >= 10.0:
+            recommendations.insert(0, "URGENT: Large capacity discrepancy requires immediate investigation")
+            recommendations.append("Consider temporary manual verification of generator capacity")
+        
         return recommendations
 
     def _classify_performance(
@@ -1834,6 +1879,10 @@ class GeneratorAnalyzer:
             "FORECAST_IS_ZERO",
             "P_MAX_ACTUAL",
             "P_MAX_FORECAST",
+            ## Added ## - Pmax discrepancy validation
+            "pmax_discrepancy_mw",
+            "pmax_discrepancy_percentage", 
+            "pmax_discrepancy_flag",
             # Enhanced metrics
             "generator_capacity_mw",
             "rmse_percentage_of_capacity",
@@ -2146,6 +2195,28 @@ class GeneratorAnalyzer:
             "FORECAST_IS_ZERO": forecast_is_zero,
             "P_MAX_ACTUAL": merged_df.pmax_Actual.iloc[0],
             "P_MAX_FORECAST": merged_df.pmax_Forecast.iloc[0],
+            ## Added ## - Pmax discrepancy metrics
+            "pmax_discrepancy_mw": (
+                merged_df.pmax_Actual.iloc[0] - merged_df.pmax_Forecast.iloc[0]
+                if pd.notna(merged_df.pmax_Actual.iloc[0]) and pd.notna(merged_df.pmax_Forecast.iloc[0])
+                else None
+            ),
+            "pmax_discrepancy_percentage": (
+                abs(merged_df.pmax_Actual.iloc[0] - merged_df.pmax_Forecast.iloc[0]) / 
+                max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0]) * 100
+                if pd.notna(merged_df.pmax_Actual.iloc[0]) and pd.notna(merged_df.pmax_Forecast.iloc[0])
+                and max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0]) > 0
+                else None
+            ),
+            "pmax_discrepancy_flag": (
+                abs(merged_df.pmax_Actual.iloc[0] - merged_df.pmax_Forecast.iloc[0]) / 
+                max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0]) * 100 > 
+                self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"]["percentage_threshold"]
+                if pd.notna(merged_df.pmax_Actual.iloc[0]) and pd.notna(merged_df.pmax_Forecast.iloc[0])
+                and max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0]) >= 
+                self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"]["min_capacity_for_check"]
+                else False
+            ),
             ## Fixed ## - New capacity-based metrics
             "generator_capacity_mw": generator_capacity,
             "rmse_percentage_of_capacity": (

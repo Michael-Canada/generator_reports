@@ -137,15 +137,15 @@ class PerformanceReportGenerator:
                     return df[col]
             return pd.Series([default_value] * len(df), index=df.index)
         
-        # Create mask for generators to EXCLUDE (all three conditions must be true)
+        # Create mask for generators to EXCLUDE (both conditions must be true)
         pmax_values = get_column_values(df, ['pmax', 'generator_capacity_mw'])
         max_actual_values = get_column_values(df, ['max_actual_generation', 'max_pg'])
-        max_forecast_values = get_column_values(df, ['max_forecast_generation', 'max_fcst_pg'])
+        # Note: max_forecast_values is no longer used for filtering
         
         exclude_mask = (
             (pmax_values < min_threshold) &
-            (max_actual_values < min_threshold) &
-            (max_forecast_values < min_threshold)
+            (max_actual_values < min_threshold)
+            # Removed: & (max_forecast_values < min_threshold)
         )
         
         filtered_df = df[~exclude_mask].copy()
@@ -194,6 +194,9 @@ class PerformanceReportGenerator:
             
             # Chronic Forecast Error Detection
             self._create_chronic_error_section(pdf, anomalies_df, alerts, results_df)
+            
+            # Pmax Discrepancy Analysis
+            self._create_pmax_discrepancy_section(pdf, results_df, anomalies_df, alerts)
             
             # Advanced Metrics Analysis
             self._create_advanced_metrics_section(pdf, results_df)
@@ -329,11 +332,6 @@ CURRENT ANALYSIS INCLUDES:
             ax_table.axis('off')
             
             if metric in filtered_results.columns:
-                # Title ABOVE the table
-                ax_table.text(0.5, 0.95, f'Bottom 10 Percentile: {title}', 
-                             ha='center', va='top', transform=ax_table.transAxes,
-                             fontsize=12, fontweight='bold')
-                
                 # Get bottom 10 percentile from filtered data
                 bottom_10_pct = int(len(filtered_results) * 0.1)
                 if bottom_10_pct == 0:
@@ -348,7 +346,24 @@ CURRENT ANALYSIS INCLUDES:
                 for idx, row in worst_performers.head(8).iterrows():
                     plant_id = row.get('plant_id', 'N/A')
                     unit_id = row.get('unit_id', 'N/A')
-                    pmax = row.get('pmax', row.get('Pmax', 'N/A'))
+                    
+                    # Get Pmax using the comprehensive lookup method
+                    pmax_value = self._get_pmax_from_resource_db(row['name'])
+                    if pmax_value is None:
+                        pmax_str = self._get_pmax_alternative(row['name'])
+                        # Try to convert to float if it's a valid number
+                        try:
+                            if pmax_str.endswith('*'):
+                                pmax = float(pmax_str[:-1])  # Remove the * indicator
+                            elif pmax_str != 'N/A':
+                                pmax = float(pmax_str)
+                            else:
+                                pmax = 'N/A'
+                        except (ValueError, TypeError):
+                            pmax = 'N/A'
+                    else:
+                        pmax = pmax_value
+                    
                     fuel_type = row.get('fuel_type', 'Unknown')
                     fuel_type_str = str(fuel_type) if fuel_type and str(fuel_type) != 'nan' else 'Unknown'
                     table_data.append([
@@ -506,7 +521,24 @@ To enable anomaly detection:
                 severity = 'Critical' if row['rmse_zscore'] > 3.0 or row['mae_zscore'] > 3.0 else 'High'
                 plant_id = row.get('plant_id', 'N/A')
                 unit_id = row.get('unit_id', 'N/A')
-                pmax = row.get('generator_capacity_mw', row.get('pmax', row.get('Pmax', 'N/A')))
+                
+                # Get Pmax using the comprehensive lookup method
+                pmax_value = self._get_pmax_from_resource_db(row['name'])
+                if pmax_value is None:
+                    pmax_str = self._get_pmax_alternative(row['name'])
+                    # Try to convert to float if it's a valid number
+                    try:
+                        if pmax_str.endswith('*'):
+                            pmax = float(pmax_str[:-1])  # Remove the * indicator
+                        elif pmax_str != 'N/A':
+                            pmax = float(pmax_str)
+                        else:
+                            pmax = 'N/A'
+                    except (ValueError, TypeError):
+                        pmax = 'N/A'
+                else:
+                    pmax = pmax_value
+                
                 performance_class = row['performance_classification']
                 performance_class_str = str(performance_class) if performance_class and str(performance_class) != 'nan' else 'Unknown'
                 table_data.append([
@@ -539,7 +571,6 @@ To enable anomaly detection:
                     cellDict[(i, 5)].set_width(0.15)  # Severity
                     cellDict[(i, 6)].set_width(0.15)  # Class
                     
-                ax_table.set_title('Statistical Anomalies (Z-Score > 2.0)', fontweight='bold', y=0.98)
             else:
                 ax_table.text(0.5, 0.5, 'No Statistical Anomalies Detected', 
                             ha='center', va='center', fontsize=12, fontweight='bold',
@@ -576,8 +607,8 @@ To enable anomaly detection:
         attention and provides actionable recommendations for improvement.
         
         FILTERING APPLIED: Small generators are excluded from all tables if they meet
-        ALL three criteria: Pmax < {min_threshold} MW, max actual generation < {min_threshold} MW,
-        and max predicted generation < {min_threshold} MW.
+        BOTH of these criteria: Pmax < {min_threshold} MW AND max actual generation < {min_threshold} MW.
+        (Previously used 3rd criterion 'max predicted generation' is no longer applied.)
         """
         ax.text(0.5, 0.5, description, ha='center', va='center', fontsize=12,
                 wrap=True, bbox=dict(boxstyle="round,pad=0.5", facecolor="lightblue", alpha=0.7))
@@ -662,6 +693,17 @@ To enable anomaly detection:
                 ['Average R²', f"{filtered_results['R_SQUARED'].mean():.3f}" if len(filtered_results) > 0 else "N/A"]
             ]
             
+            # Add Pmax discrepancy statistics
+            pmax_data = results_df[
+                (results_df['P_MAX_ACTUAL'].notna()) & 
+                (results_df['P_MAX_FORECAST'].notna()) &
+                (results_df['P_MAX_ACTUAL'] > 0) &
+                (results_df['P_MAX_FORECAST'] > 0)
+            ]
+            if len(pmax_data) > 0:
+                pmax_discrepancies = pmax_data.get('pmax_discrepancy_flag', pd.Series(dtype=bool)).sum() if 'pmax_discrepancy_flag' in pmax_data.columns else 0
+                stats_data.append(['Pmax Discrepancies (>5%)', pmax_discrepancies])
+            
             if bid_validation_results is not None and len(bid_validation_results) > 0:
                 stats_data.append(['Bid Validation Issues', len(bid_validation_results)])
             
@@ -672,7 +714,6 @@ To enable anomaly detection:
             table.auto_set_font_size(False)
             table.set_fontsize(10)
             table.scale(1, 2)
-            ax4.set_title('Key Statistics', fontweight='bold')
         
         plt.tight_layout()
         pdf.savefig(fig, bbox_inches='tight')
@@ -769,7 +810,6 @@ To enable anomaly detection:
             filtered_results = self._filter_generators_for_report(results_df)
             
             fig = plt.figure(figsize=(11, 8.5))
-            fig.suptitle('Generators Requiring Attention (Poor and Critical Only)', fontsize=16, fontweight='bold')
             
             # Filter to only poor and critical generators, sorted by performance score (ascending = worst first)
             poor_critical_generators = filtered_results[
@@ -787,14 +827,31 @@ To enable anomaly detection:
             for idx, row in poor_critical_generators.iterrows():
                 plant_id = row.get('plant_id', 'N/A')
                 unit_id = row.get('unit_id', 'N/A')
-                # Get capacity from the correct column name
-                pmax = row.get('generator_capacity_mw', row.get('pmax', row.get('Pmax', 'N/A')))
+                
+                # Get Pmax using the comprehensive lookup method
+                pmax_value = self._get_pmax_from_resource_db(row['name'])
+                if pmax_value is None:
+                    pmax_str = self._get_pmax_alternative(row['name'])
+                    # Try to convert to float if it's a valid number
+                    try:
+                        if pmax_str.endswith('*'):
+                            pmax = float(pmax_str[:-1])  # Remove the * indicator
+                        elif pmax_str != 'N/A':
+                            pmax = float(pmax_str)
+                        else:
+                            pmax = 'N/A'
+                    except (ValueError, TypeError):
+                        pmax = 'N/A'
+                else:
+                    pmax = pmax_value
+                
+                fuel_type = row.get('fuel_type', 'N/A')
                 table_data.append([
                     str(row['name'])[:25] + '...' if len(str(row['name'])) > 25 else str(row['name']),  # Generator name
                     str(plant_id),     # Plant ID
                     str(unit_id),      # Unit ID
                     f"{pmax:.1f}" if isinstance(pmax, (int, float)) else str(pmax),  # Pmax
-                    row['performance_classification'],
+                    str(fuel_type),    # Fuel Type
                     f"{row.get('performance_score', row['R_SQUARED']*100):.1f}",
                     f"{row['RMSE_over_generation']:.1f}"
                 ])
@@ -805,12 +862,12 @@ To enable anomaly detection:
             
             if table_data:
                 table = ax_table.table(cellText=table_data,
-                                     colLabels=['Generator Name', 'Plant ID', 'Unit ID', 'Pmax (MW)', 'Classification', 'Score', 'RMSE'],
+                                     colLabels=['Generator Name', 'Plant ID', 'Unit ID', 'Pmax (MW)', 'Fuel Type', 'Score', 'RMSE'],
                                      cellLoc='left',
                                      loc='center')
                 table.auto_set_font_size(False)
-                table.set_fontsize(8)
-                table.scale(1.2, 1.8)  # Increase row height for better readability
+                table.set_fontsize(9)
+                table.scale(1.3, 2.5)  # Increase both width and height to reduce vertical squeezing
                 
                 # Adjust column widths
                 cellDict = table.get_celld()
@@ -819,14 +876,9 @@ To enable anomaly detection:
                     cellDict[(i, 1)].set_width(0.10)  # Plant ID (increased from 0.08)
                     cellDict[(i, 2)].set_width(0.10)  # Unit ID (increased from 0.08)
                     cellDict[(i, 3)].set_width(0.15)  # Pmax (increased from 0.12)
-                    cellDict[(i, 4)].set_width(0.20)  # Classification (increased from 0.17)
+                    cellDict[(i, 4)].set_width(0.20)  # Fuel Type (was Classification)
                     cellDict[(i, 5)].set_width(0.08)  # Score (decreased from 0.10)
                     cellDict[(i, 6)].set_width(0.07)  # RMSE (decreased from 0.10)
-                
-                # Add subtitle with count (show both filtered and original counts)
-                plt.figtext(0.5, 0.95, f'Generators requiring attention: {len(poor_critical_generators)} of {len(filtered_results)} analyzed '
-                           f'({len(results_df)} total before filtering)', 
-                           ha='center', fontsize=12, style='italic')
             else:
                 # No poor/critical generators found
                 ax_table.text(0.5, 0.5, '✅ No Generators Requiring Attention\nAll generators have FAIR or better performance', 
@@ -859,7 +911,7 @@ To enable anomaly detection:
         - Minimum 3 problematic days in any 5-day sliding window
         - Minimum 2 hours of data per day to qualify (adjusted for 3x daily sampling)
         - Only considers periods with generation ≥ 5 MW to avoid noise
-        - High severity if 6+ problematic days occur in any 8-day window
+        - All detected chronic patterns are classified as medium severity
         
         Impact: Chronic errors indicate systematic model issues requiring immediate attention.
         This approach detects sustained chronic patterns while reducing sensitivity to short-term market volatility.
@@ -871,13 +923,10 @@ To enable anomaly detection:
         The sliding window approach analyzes forecast accuracy over time:
         
         1. Daily Statistics: Calculate daily average forecast-to-actual ratios for each generator
-        2. Sliding Windows: Apply 5-day and 8-day sliding windows across the analysis period
+        2. Sliding Windows: Apply 5-day sliding windows across the analysis period
         3. Pattern Detection: Identify periods where forecast ratios exceed thresholds:
            - Over-forecasting: Forecast/Actual ≥ 2.0 (forecast is at least 200% of actual)
            - Under-forecasting: Forecast/Actual ≤ 0.5 (forecast is 50% or less of actual)
-        4. Severity Classification:
-           - Medium Severity: 3+ problematic days in any 5-day window
-           - High Severity: 6+ problematic days in any 8-day window
         
         This methodology ensures robust detection of persistent forecasting issues while minimizing
         false positives from temporary market disruptions or operational anomalies.
@@ -892,7 +941,6 @@ To enable anomaly detection:
         
         # Create second page with table
         fig2 = plt.figure(figsize=(11, 8.5))
-        fig2.suptitle('Chronic Error Generators - Analysis Results', fontsize=16, fontweight='bold')
         
         # Chronic error analysis
         chronic_alerts = [alert for alert in alerts if 'CHRONIC' in alert.get('alert_type', '')] if alerts else []
@@ -939,14 +987,31 @@ To enable anomaly detection:
                     generator_alerts[generator_name]['patterns'].append(pattern)
                     generator_alerts[generator_name]['avg_actual_values'].append(details.get('avg_actual_mw', 0))
 
-                # Sort generators by highest severity and then by max avg_actual_mw
+                # Sort generators by highest severity and then by Pmax (larger to smaller)
                 def get_severity_score(severities):
                     severity_order = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
                     return max(severity_order.get(sev.lower(), 0) for sev in severities)
                 
+                def get_pmax_for_sorting(generator_name):
+                    """Get Pmax value for sorting purposes."""
+                    # Use the comprehensive lookup method
+                    pmax_value = self._get_pmax_from_resource_db(generator_name)
+                    if pmax_value is not None:
+                        return float(pmax_value)
+                    
+                    pmax_str = self._get_pmax_alternative(generator_name)
+                    try:
+                        if pmax_str.endswith('*'):
+                            return float(pmax_str[:-1])  # Remove the * indicator
+                        elif pmax_str != 'N/A':
+                            return float(pmax_str)
+                    except (ValueError, TypeError):
+                        pass
+                    return 0.0  # Default to 0 if not found
+                
                 generators_sorted = sorted(generator_alerts.items(), 
                                          key=lambda x: (get_severity_score(x[1]['severities']), 
-                                                       max(x[1]['avg_actual_values']) if x[1]['avg_actual_values'] else 0), 
+                                                       get_pmax_for_sorting(x[0])), 
                                          reverse=True)
                 
                 table_data = []
@@ -967,30 +1032,78 @@ To enable anomaly detection:
                     # Get highest severity
                     highest_severity = max(info['severities'], key=lambda s: get_severity_score([s]))
                     
-                    # Get Pmax using the same method as successful tables - look up in results DataFrame
+                    # Get Pmax using the same method as successful tables - comprehensive matching approach
                     pmax_display = 'N/A'
                     pmax_final = 'N/A'
+                    fuel_type = 'Unknown'
                     
-                    # First try to find the generator in results_df (same approach as working tables)
+                    # First try to find the generator in results_df with comprehensive matching
                     if results_df is not None and not results_df.empty:
-                        # Try matching by orig_name first (full generator name with unit)
-                        matching_rows = results_df[results_df['orig_name'] == generator_name]
+                        # Try multiple matching strategies to find the generator
+                        matching_rows = pd.DataFrame()
+                        
+                        # Strategy 1: Direct name match (most common case)
+                        matching_rows = results_df[results_df['name'] == generator_name]
+                        
+                        # Strategy 2: Match by orig_name if name didn't work
                         if matching_rows.empty:
-                            # Fallback to matching by name (base generator name)
-                            matching_rows = results_df[results_df['name'] == generator_name]
+                            matching_rows = results_df[results_df['orig_name'] == generator_name]
+                        
+                        # Strategy 3: Extract main generator name and try partial matching
+                        if matching_rows.empty:
+                            # Try matching just the main part (before any unit identifier)
+                            main_name = generator_name.split(' ')[0]  # Get first part of name
+                            matching_rows = results_df[results_df['name'].str.startswith(main_name)]
+                            if len(matching_rows) > 1:
+                                # If multiple matches, try to get exact match first
+                                exact_match = matching_rows[matching_rows['name'] == generator_name]
+                                if not exact_match.empty:
+                                    matching_rows = exact_match
+                                else:
+                                    # Take the first match if no exact match
+                                    matching_rows = matching_rows.head(1)
+                        
+                        # Strategy 4: Try matching by main_name column if available
+                        if matching_rows.empty and 'main_name' in results_df.columns:
+                            main_name = generator_name.split(' ')[0]
+                            matching_rows = results_df[results_df['main_name'] == main_name]
+                            if len(matching_rows) > 1:
+                                matching_rows = matching_rows.head(1)  # Take first match
                         
                         if not matching_rows.empty:
                             row = matching_rows.iloc[0]
-                            # Use the EXACT same method as successful tables
-                            pmax = row.get('generator_capacity_mw', row.get('pmax', row.get('Pmax', 'N/A')))
-                            if isinstance(pmax, (int, float)) and pmax > 0:
-                                pmax_display = f"{pmax:.1f}"
+                            
+                            # Get Pmax using the same method as successful sections - use row['name'] from results_df
+                            matched_generator_name = row['name']  # Use the actual name from results_df
+                            
+                            # Get Pmax using the comprehensive lookup method
+                            pmax_value = self._get_pmax_from_resource_db(matched_generator_name)
+                            if pmax_value is None:
+                                pmax_str = self._get_pmax_alternative(matched_generator_name)
+                                # Try to convert to float if it's a valid number
+                                try:
+                                    if pmax_str.endswith('*'):
+                                        pmax_value = float(pmax_str[:-1])  # Remove the * indicator
+                                    elif pmax_str != 'N/A':
+                                        pmax_value = float(pmax_str)
+                                    else:
+                                        pmax_value = None
+                                except (ValueError, TypeError):
+                                    pmax_value = None
+                            
+                            # Set pmax_display based on the result
+                            if pmax_value is not None and pmax_value > 0:
+                                pmax_display = f"{pmax_value:.1f}"
                                 pmax_final = f"{pmax_display} MW"
-                                print(f"Debug: Found Pmax {pmax} for {generator_name} in results_df using successful table method")
-                            else:
-                                print(f"Debug: Pmax from results_df for {generator_name} was: {pmax} (type: {type(pmax)})")
+                                print(f"Debug: Found Pmax {pmax_value} for {generator_name} (matched as {matched_generator_name}) using comprehensive lookup")
+                            
+                            fuel_type = row.get('fuel_type', 'Unknown')
                         else:
-                            print(f"Debug: Generator {generator_name} not found in results_df (tried orig_name and name columns)")
+                            print(f"Debug: Generator {generator_name} not found in results_df with any matching strategy")
+                            # Show available generator names for debugging
+                            if len(results_df) > 0:
+                                sample_names = results_df['name'].head(3).tolist()
+                                print(f"Debug: Sample generator names in results_df: {sample_names}")
                     else:
                         print(f"Debug: results_df is None or empty: {results_df is None}, {len(results_df) if results_df is not None else 'N/A'}")
                     
@@ -1014,14 +1127,16 @@ To enable anomaly detection:
                         pmax_final = 'N/A'
                         print(f"Debug: No Pmax found for {generator_name} in any source")
                     
+                    # Ensure fuel_type is a safe string
+                    fuel_type_safe = str(fuel_type) if fuel_type and str(fuel_type) != 'nan' else 'Unknown'
+                    
                     table_data.append([
                         str(generator_name)[:20] + '...' if len(str(generator_name)) > 20 else str(generator_name),
                         str(plant_id),
                         str(unit_id),
                         error_type_display[:12],  # Error types
-                        pattern,  # Pattern
                         pmax_final,  # Pmax from resources.json with proper units
-                        highest_severity  # Highest severity
+                        fuel_type_safe[:8]  # Fuel Type (truncated to fit)
                     ])
                 
                 # Sort bid validation alerts by severity (critical first) for non-chronic case
@@ -1052,7 +1167,7 @@ To enable anomaly detection:
             
             if table_data:
                 if chronic_alerts:
-                    col_labels = ['Generator', 'Plant ID', 'Unit ID', 'Error Type', 'Pattern', 'Pmax', 'Severity']
+                    col_labels = ['Generator', 'Plant ID', 'Unit ID', 'Error Type', 'Pmax', 'Fuel Type']
                     title = 'Chronic Error Generators (Unique)'
                 else:
                     col_labels = ['Generator', 'Plant ID', 'Unit ID', 'Issue Type', 'Severity', 'Fuel']
@@ -1063,20 +1178,19 @@ To enable anomaly detection:
                                      cellLoc='left',
                                      loc='center')
                 table.auto_set_font_size(False)
-                table.set_fontsize(8)
-                table.scale(1, 1.8)  # Increased row height for better readability
+                table.set_fontsize(9)
+                table.scale(1.2, 2.5)  # Increase both width and height to reduce vertical squeezing
                 
                 # Adjust column widths 
                 cellDict = table.get_celld()
                 for i in range(len(table_data) + 1):  # +1 for header
                     if chronic_alerts:
-                        cellDict[(i, 0)].set_width(0.25)  # Generator name (increased from 0.20)
+                        cellDict[(i, 0)].set_width(0.30)  # Generator name (increased)
                         cellDict[(i, 1)].set_width(0.10)  # Plant ID
                         cellDict[(i, 2)].set_width(0.10)  # Unit ID
-                        cellDict[(i, 3)].set_width(0.15)  # Error type (increased from 0.12)
-                        cellDict[(i, 4)].set_width(0.15)  # Pattern (increased from 0.12)
-                        cellDict[(i, 5)].set_width(0.15)  # Pmax (increased from 0.12)
-                        cellDict[(i, 6)].set_width(0.10)  # Severity (reduced from 0.12)
+                        cellDict[(i, 3)].set_width(0.20)  # Error type (increased)
+                        cellDict[(i, 4)].set_width(0.15)  # Pmax
+                        cellDict[(i, 5)].set_width(0.15)  # Fuel Type
                     else:
                         cellDict[(i, 0)].set_width(0.25)  # Generator name
                         cellDict[(i, 1)].set_width(0.10)  # Plant ID
@@ -1084,8 +1198,6 @@ To enable anomaly detection:
                         cellDict[(i, 3)].set_width(0.20)  # Issue type
                         cellDict[(i, 4)].set_width(0.15)  # Severity
                         cellDict[(i, 5)].set_width(0.20)  # Fuel
-                
-                ax_table.set_title(title, fontweight='bold')
         else:
             # No chronic errors found
             ax_none = plt.subplot(1, 1, 1)
@@ -1097,6 +1209,162 @@ To enable anomaly detection:
         plt.tight_layout()
         pdf.savefig(fig2, bbox_inches='tight')
         plt.close(fig2)
+    
+    def _create_pmax_discrepancy_section(self, pdf: PdfPages, results_df: pd.DataFrame, anomalies_df: pd.DataFrame, alerts: List[dict]):
+        """Create Pmax discrepancy analysis section."""
+        print(f"🔍 Creating Pmax Discrepancy section with {len(results_df)} generators")
+        
+        # Filter results to include only generators with Pmax discrepancy data
+        pmax_data = results_df[
+            (results_df['P_MAX_ACTUAL'].notna()) & 
+            (results_df['P_MAX_FORECAST'].notna()) &
+            (results_df['P_MAX_ACTUAL'] > 0) &
+            (results_df['P_MAX_FORECAST'] > 0)
+        ].copy()
+        
+        if len(pmax_data) == 0:
+            # No Pmax data available
+            fig = plt.figure(figsize=(11, 8.5))
+            fig.suptitle('Pmax Discrepancy Analysis', fontsize=16, fontweight='bold')
+            ax = plt.subplot(1, 1, 1)
+            ax.axis('off')
+            ax.text(0.5, 0.5, '⚠️ No Pmax data available for comparison', 
+                   ha='center', va='center', fontsize=14, fontweight='bold',
+                   bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.7))
+            pdf.savefig(fig, bbox_inches='tight')
+            plt.close(fig)
+            return
+        
+        # Calculate discrepancy metrics
+        pmax_data['pmax_discrepancy_mw'] = pmax_data['P_MAX_ACTUAL'] - pmax_data['P_MAX_FORECAST']
+        pmax_data['pmax_discrepancy_percentage'] = abs(pmax_data['pmax_discrepancy_mw']) / np.maximum(
+            pmax_data[['P_MAX_ACTUAL', 'P_MAX_FORECAST']].max(axis=1), 1.0) * 100
+        pmax_data['pmax_discrepancy_flag'] = pmax_data['pmax_discrepancy_percentage'] > 5.0
+        
+        # Filter for discrepancies
+        discrepancy_generators = pmax_data[pmax_data['pmax_discrepancy_flag']].copy()
+        
+        # Create main figure
+        fig = plt.figure(figsize=(11, 8.5))
+        fig.suptitle('Pmax Discrepancy Analysis - Data Synchronization Issues', fontsize=16, fontweight='bold')
+        
+        # Description
+        ax_text = plt.subplot2grid((3, 2), (0, 0), colspan=2)
+        ax_text.axis('off')
+        
+        description = """
+        Pmax Discrepancy Analysis compares generator capacity values from two sources:
+        • P_MAX_ACTUAL: Capacity from reflow operational data
+        • P_MAX_FORECAST: Capacity from ResourceDB system
+        
+        Discrepancies >5% may indicate data synchronization issues between systems.
+        """
+        
+        ax_text.text(0.02, 0.95, description, transform=ax_text.transAxes, fontsize=10,
+                    verticalalignment='top', wrap=True)
+        
+        # Statistics summary
+        total_generators = len(pmax_data)
+        flagged_generators = len(discrepancy_generators)
+        avg_discrepancy = pmax_data['pmax_discrepancy_percentage'].mean()
+        max_discrepancy = pmax_data['pmax_discrepancy_percentage'].max()
+        
+        stats_text = f"""
+        Analysis Summary:
+        • Total generators analyzed: {total_generators}
+        • Generators with >5% discrepancy: {flagged_generators} ({flagged_generators/total_generators*100:.1f}%)
+        • Average discrepancy: {avg_discrepancy:.1f}%
+        • Maximum discrepancy: {max_discrepancy:.1f}%
+        """
+        
+        ax_text.text(0.02, 0.45, stats_text, transform=ax_text.transAxes, fontsize=10,
+                    verticalalignment='top', fontweight='bold',
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.3))
+        
+        if flagged_generators > 0:
+            # Discrepancy distribution plot
+            ax_dist = plt.subplot2grid((3, 2), (1, 0))
+            pmax_data['pmax_discrepancy_percentage'].hist(bins=20, alpha=0.7, color='skyblue', edgecolor='black')
+            ax_dist.axvline(5.0, color='red', linestyle='--', label='5% Threshold')
+            ax_dist.set_xlabel('Discrepancy (%)')
+            ax_dist.set_ylabel('Number of Generators')
+            ax_dist.set_title('Pmax Discrepancy Distribution')
+            ax_dist.legend()
+            ax_dist.grid(True, alpha=0.3)
+            
+            # Scatter plot: Actual vs Forecast
+            ax_scatter = plt.subplot2grid((3, 2), (1, 1))
+            normal_gens = pmax_data[~pmax_data['pmax_discrepancy_flag']]
+            flagged_gens = pmax_data[pmax_data['pmax_discrepancy_flag']]
+            
+            if len(normal_gens) > 0:
+                ax_scatter.scatter(normal_gens['P_MAX_FORECAST'], normal_gens['P_MAX_ACTUAL'], 
+                                 alpha=0.6, color='green', label=f'Normal (<5%): {len(normal_gens)}', s=30)
+            if len(flagged_gens) > 0:
+                ax_scatter.scatter(flagged_gens['P_MAX_FORECAST'], flagged_gens['P_MAX_ACTUAL'], 
+                                 alpha=0.8, color='red', label=f'Flagged (≥5%): {len(flagged_gens)}', s=50)
+            
+            # Perfect agreement line
+            max_val = max(pmax_data['P_MAX_ACTUAL'].max(), pmax_data['P_MAX_FORECAST'].max())
+            ax_scatter.plot([0, max_val], [0, max_val], 'k--', alpha=0.5, label='Perfect Agreement')
+            
+            ax_scatter.set_xlabel('P_MAX_FORECAST (MW)')
+            ax_scatter.set_ylabel('P_MAX_ACTUAL (MW)')
+            ax_scatter.set_title('Reflow vs ResourceDB Pmax Comparison')
+            ax_scatter.legend()
+            ax_scatter.grid(True, alpha=0.3)
+            
+            # Table of flagged generators
+            if flagged_generators > 0:
+                ax_table = plt.subplot2grid((3, 2), (2, 0), colspan=2)
+                ax_table.axis('off')
+                
+                # Sort by difference (MW) from large to small (absolute value for sorting)
+                top_flagged = discrepancy_generators.reindex(
+                    discrepancy_generators['pmax_discrepancy_mw'].abs().sort_values(ascending=False).index
+                ).head(min(10, len(discrepancy_generators)))
+                
+                table_data = []
+                for _, row in top_flagged.iterrows():
+                    name = row['name'][:20] + '...' if len(row['name']) > 20 else row['name']
+                    table_data.append([
+                        name,
+                        row.get('plant_id', 'N/A'),
+                        row.get('unit_id', 'N/A'),
+                        f"{row['P_MAX_ACTUAL']:.1f}",
+                        f"{row['P_MAX_FORECAST']:.1f}",
+                        f"{row['pmax_discrepancy_mw']:+.1f}"
+                    ])
+                
+                headers = ['Generator', 'Plant ID', 'Unit ID', 'Reflow\n(MW)', 'ResourceDB\n(MW)', 'Difference\n(MW)']
+                
+                table = ax_table.table(cellText=table_data, colLabels=headers,
+                                     cellLoc='center', loc='center')
+                table.auto_set_font_size(False)
+                table.set_fontsize(7)
+                table.scale(1, 1.5)
+                
+                # Color code by severity (based on absolute difference)
+                for i, row in enumerate(table_data):
+                    discrepancy_mw = abs(float(row[5]))
+                    if discrepancy_mw >= 50.0:  # High severity for large MW differences
+                        color = 'lightcoral'  # High severity
+                    else:
+                        color = 'lightyellow'  # Medium severity
+                    
+                    for j in range(len(headers)):
+                        table[(i+1, j)].set_facecolor(color)
+        else:
+            # No discrepancies found
+            ax_none = plt.subplot2grid((3, 2), (1, 0), colspan=2)
+            ax_none.axis('off')
+            ax_none.text(0.5, 0.5, '✅ No Significant Pmax Discrepancies Detected\nAll generators have <5% difference between data sources', 
+                        ha='center', va='center', fontsize=14, fontweight='bold',
+                        bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgreen", alpha=0.7))
+        
+        plt.tight_layout()
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
     
     def _create_bid_validation_section(self, pdf: PdfPages, bid_validation_results: pd.DataFrame):
         """Create bid validation section."""
@@ -1165,13 +1433,34 @@ To enable anomaly detection:
                 unit_id = row.get('unit_id', 'N/A')
                 fuel_type = row.get('fuel_type', 'Unknown')
                 fuel_type_safe = str(fuel_type) if fuel_type and str(fuel_type) != 'nan' else 'Unknown'
+                
+                # Get generator name for Pmax lookup
+                generator_name = row.get('generator_name', row.get('name', 'Unknown'))
+                
+                # Get Pmax using the comprehensive lookup method, with fallback to bid validation data
+                pmax_value = self._get_pmax_from_resource_db(generator_name)
+                if pmax_value is None:
+                    pmax_str = self._get_pmax_alternative(generator_name)
+                    try:
+                        if pmax_str.endswith('*'):
+                            pmax = float(pmax_str[:-1])  # Remove the * indicator
+                        elif pmax_str != 'N/A':
+                            pmax = float(pmax_str)
+                        else:
+                            # Fallback to bid validation results pmax column if available
+                            pmax = row.get('pmax', 0) if 'pmax' in row else 'N/A'
+                    except (ValueError, TypeError):
+                        pmax = row.get('pmax', 0) if 'pmax' in row else 'N/A'
+                else:
+                    pmax = pmax_value
+                
                 table_data.append([
-                    str(row.get('generator_name', row.get('name', 'Unknown')))[:20] + '...' if len(str(row.get('generator_name', row.get('name', 'Unknown')))) > 20 else str(row.get('generator_name', row.get('name', 'Unknown'))),
+                    str(generator_name)[:20] + '...' if len(str(generator_name)) > 20 else str(generator_name),
                     str(plant_id),
                     str(unit_id),
                     row.get('issue_type', 'Unknown')[:15],
                     row.get('severity', 'Unknown'),
-                    f"{row.get('pmax', 0):.1f}" if 'pmax' in row else 'N/A',
+                    f"{pmax:.1f}" if isinstance(pmax, (int, float)) and pmax > 0 else 'N/A',
                     fuel_type_safe[:6]
                 ])
             
@@ -1194,8 +1483,6 @@ To enable anomaly detection:
                     cellDict[(i, 4)].set_width(0.15)  # Severity
                     cellDict[(i, 5)].set_width(0.10)  # Pmax
                     cellDict[(i, 6)].set_width(0.10)  # Fuel
-                
-                ax_table.set_title('Top Bid Validation Issues', fontweight='bold')
         else:
             # No bid validation data
             ax_none = plt.subplot2grid((3, 2), (1, 0), colspan=2)
@@ -1211,35 +1498,15 @@ To enable anomaly detection:
     def _create_operational_characteristics_section(self, pdf: PdfPages, results_df: pd.DataFrame):
         """Create operational characteristics section."""
         fig = plt.figure(figsize=(11, 8.5))
-        fig.suptitle('Operational Characteristics Analysis', fontsize=16, fontweight='bold')
-        
-        # Description
-        ax_text = plt.subplot2grid((3, 2), (0, 0), colspan=2)
-        ax_text.axis('off')
-        
-        description = """
-        OPERATIONAL CHARACTERISTICS
-        
-        Analysis of generator operational patterns and their impact on forecast accuracy:
-        
-        - CAPACITY UTILIZATION: Percentage of time generator is running
-        - MUST-RUN STATUS: Whether generator runs consistently (baseload characteristics)
-        - GENERATION PATTERNS: Zero vs non-zero generation frequencies
-        - CAPACITY FACTORS: Relationship between Pmax and actual generation patterns
-        
-        These characteristics help identify if poor forecasts are due to operational complexity.
-        """
-        
-        ax_text.text(0.05, 0.95, description, transform=ax_text.transAxes, fontsize=11,
-                    verticalalignment='top', fontfamily='monospace')
+        fig.suptitle('Error associated with Fuel-Type', fontsize=16, fontweight='bold')
         
         if len(results_df) > 0:
             # Apply filtering to remove small generators
             filtered_results = self._filter_generators_for_report(results_df)
             
-            # Performance by fuel type (moved to take up more space since capacity utilization chart removed)
+            # Performance by fuel type - centered and larger
             if 'fuel_type' in filtered_results.columns:
-                ax_fuel = plt.subplot2grid((3, 2), (1, 0), colspan=2)
+                ax_fuel = plt.subplot(111)  # Take up the entire figure
                 fuel_rmse = filtered_results.groupby('fuel_type')['RMSE_over_generation'].mean().sort_values(ascending=False)
                 colors = ['red', 'orange', 'yellow', 'lightblue', 'lightgreen', 'purple', 'pink']
                 ax_fuel.bar(range(len(fuel_rmse)), fuel_rmse.values, color=colors[:len(fuel_rmse)])
@@ -1248,61 +1515,18 @@ To enable anomaly detection:
                 ax_fuel.set_title('Average RMSE by Fuel Type')
                 ax_fuel.set_ylabel('Average RMSE (MW)')
                 ax_fuel.grid(True, alpha=0.3)
-            
-            # Low utilization generators with poor performance (with plant_id and unit_id)
-            ax_table = plt.subplot2grid((3, 2), (2, 0), colspan=2)
-            ax_table.axis('off')
-            
-            # Find generators with low utilization and poor performance
-            if '%_running' in filtered_results.columns:
-                low_util_poor_perf = filtered_results[
-                    (filtered_results['%_running'] < 20) & 
-                    (filtered_results['performance_classification'].isin(['poor', 'critical']))
-                ].sort_values('RMSE_over_generation', ascending=False)
-                
-                table_data = []
-                for idx, row in low_util_poor_perf.head(10).iterrows():  # Show more entries
-                    plant_id = row.get('plant_id', 'N/A')
-                    unit_id = row.get('unit_id', 'N/A')
-                    fuel_type = row.get('fuel_type', 'Unknown')
-                    fuel_type_safe = str(fuel_type) if fuel_type and str(fuel_type) != 'nan' else 'Unknown'
-                    table_data.append([
-                        row['name'][:18] + '...' if len(str(row['name'])) > 18 else str(row['name']),
-                        str(plant_id),
-                        str(unit_id),
-                        f"{row['%_running']:.1f}%",
-                        f"{row['RMSE_over_generation']:.1f}",
-                        row['performance_classification'],
-                        fuel_type_safe[:6],
-                        'Intermittent' if row['%_running'] < 10 else 'Low Util'
-                    ])
-                
-                if table_data:
-                    table = ax_table.table(cellText=table_data,
-                                         colLabels=['Generator', 'Plant ID', 'Unit ID', '% Running', 'RMSE', 'Class', 'Fuel', 'Pattern'],
-                                         cellLoc='left',
-                                         loc='center')
-                    table.auto_set_font_size(False)
-                    table.set_fontsize(8)
-                    table.scale(1.2, 1.5)
-                    
-                    # Adjust column widths for plant_id and unit_id
-                    cellDict = table.get_celld()
-                    for i in range(len(table_data) + 1):  # +1 for header
-                        cellDict[(i, 0)].set_width(0.22)  # Generator name
-                        cellDict[(i, 1)].set_width(0.10)  # Plant ID
-                        cellDict[(i, 2)].set_width(0.10)  # Unit ID
-                        cellDict[(i, 3)].set_width(0.12)  # % Running
-                        cellDict[(i, 4)].set_width(0.10)  # RMSE
-                        cellDict[(i, 5)].set_width(0.12)  # Class
-                        cellDict[(i, 6)].set_width(0.12)  # Fuel
-                        cellDict[(i, 7)].set_width(0.12)  # Pattern
-                    
-                    ax_table.set_title('Low Utilization Generators with Poor Performance', fontweight='bold')
-                else:
-                    ax_table.text(0.5, 0.5, '✅ No Low-Utilization Performance Issues', 
-                                ha='center', va='center', fontsize=12, fontweight='bold',
-                                bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgreen", alpha=0.7))
+            else:
+                # If no fuel_type column, show message
+                ax = plt.subplot(111)
+                ax.text(0.5, 0.5, 'No fuel type data available', 
+                       ha='center', va='center', fontsize=14)
+                ax.axis('off')
+        else:
+            # If no data, show message
+            ax = plt.subplot(111)
+            ax.text(0.5, 0.5, 'No data available for fuel type analysis', 
+                   ha='center', va='center', fontsize=14)
+            ax.axis('off')
         
         plt.tight_layout()
         pdf.savefig(fig, bbox_inches='tight')
