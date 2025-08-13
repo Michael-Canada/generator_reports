@@ -1,5 +1,5 @@
 # old Environment: placebo_api_local
-# Environment: conda activate /Users/michael.simantov/Library/CloudStorage/OneDrive-DrillingInfo/Documents/generator_reports/.conda      
+# Environment: conda activate /Users/michael.simantov/Library/CloudStorage/OneDrive-DrillingInfo/Documents/generator_reports/.conda
 #
 # ==================== DEBUG CONFIGURATION ====================
 # QUICK TESTING MODE:
@@ -7,8 +7,12 @@
 # Set FULL_PRODUCTION_RUN = 20 for analysis of all generators with capacity >= 20 MW
 #
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = 500  # User optimized setting - was 1200, changed back to user preference
-RUN_BID_VALIDATION = False   # User enabled setting - was False, changed back to user preference
+MIN_MW_TO_BE_ANALYZED = (
+    500  # User optimized setting - was 1200, changed back to user preference
+)
+RUN_BID_VALIDATION = (
+    False  # User enabled setting - was False, changed back to user preference
+)
 # ===============================================================
 
 """
@@ -745,7 +749,9 @@ class AnomalyDetector:
                 or performance
                 in [ForecastPerformance.POOR, ForecastPerformance.CRITICAL]
                 or len(chronic_errors) > 0
-                or row.get("pmax_discrepancy_flag", False)  # Added Pmax discrepancy check
+                or row.get(
+                    "pmax_discrepancy_flag", False
+                )  # Added Pmax discrepancy check
             )
 
             if is_anomaly:
@@ -770,7 +776,9 @@ class AnomalyDetector:
                     "chronic_error_details": chronic_errors,
                     ## Added ## - Pmax discrepancy information
                     "pmax_discrepancy_flag": row.get("pmax_discrepancy_flag", False),
-                    "pmax_discrepancy_percentage": row.get("pmax_discrepancy_percentage", None),
+                    "pmax_discrepancy_percentage": row.get(
+                        "pmax_discrepancy_percentage", None
+                    ),
                     "pmax_discrepancy_mw": row.get("pmax_discrepancy_mw", None),
                     "pmax_actual": row.get("P_MAX_ACTUAL", None),
                     "pmax_forecast": row.get("P_MAX_FORECAST", None),
@@ -1096,17 +1104,17 @@ class AnomalyDetector:
     ) -> dict:
         """Create an alert for Pmax discrepancy between reflow and ResourceDB."""
         pmax_actual = row.get("P_MAX_ACTUAL", "N/A")
-        pmax_forecast = row.get("P_MAX_FORECAST", "N/A") 
+        pmax_forecast = row.get("P_MAX_FORECAST", "N/A")
         discrepancy_pct = row.get("pmax_discrepancy_percentage", 0)
         discrepancy_mw = row.get("pmax_discrepancy_mw", 0)
-        
+
         # Determine severity based on discrepancy percentage
         config = self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"]
         if discrepancy_pct >= config["alert_threshold"]:
             severity = "high"
         else:
             severity = "medium"
-        
+
         return {
             "timestamp": datetime.now().isoformat(),
             ## Enhanced ## - Complete generator identification
@@ -1117,8 +1125,8 @@ class AnomalyDetector:
             "alert_type": "PMAX_DISCREPANCY",
             "severity": severity,
             "message": f"Generator {orig_name} (Plant {plant_id}, Unit {unit_id}): "
-                      f"Pmax discrepancy detected - {discrepancy_pct:.1f}% difference "
-                      f"({discrepancy_mw:.1f} MW) between reflow ({pmax_actual} MW) and ResourceDB ({pmax_forecast} MW)",
+            f"Pmax discrepancy detected - {discrepancy_pct:.1f}% difference "
+            f"({discrepancy_mw:.1f} MW) between reflow ({pmax_actual} MW) and ResourceDB ({pmax_forecast} MW)",
             "details": {
                 "pmax_reflow": pmax_actual,
                 "pmax_resourcedb": pmax_forecast,
@@ -1126,10 +1134,14 @@ class AnomalyDetector:
                 "discrepancy_percentage": discrepancy_pct,
                 "threshold_percentage": config["percentage_threshold"],
             },
-            "recommendations": self._generate_pmax_discrepancy_recommendations(discrepancy_pct),
+            "recommendations": self._generate_pmax_discrepancy_recommendations(
+                discrepancy_pct
+            ),
         }
 
-    def _generate_pmax_discrepancy_recommendations(self, discrepancy_pct: float) -> List[str]:
+    def _generate_pmax_discrepancy_recommendations(
+        self, discrepancy_pct: float
+    ) -> List[str]:
         """Generate recommendations for Pmax discrepancy issues."""
         recommendations = [
             "Investigate data synchronization between reflow and ResourceDB systems",
@@ -1137,11 +1149,15 @@ class AnomalyDetector:
             "Check for recent capacity changes or unit modifications",
             "Review generator registration data with market operator",
         ]
-        
+
         if discrepancy_pct >= 10.0:
-            recommendations.insert(0, "URGENT: Large capacity discrepancy requires immediate investigation")
-            recommendations.append("Consider temporary manual verification of generator capacity")
-        
+            recommendations.insert(
+                0, "URGENT: Large capacity discrepancy requires immediate investigation"
+            )
+            recommendations.append(
+                "Consider temporary manual verification of generator capacity"
+            )
+
         return recommendations
 
     def _classify_performance(
@@ -1881,7 +1897,7 @@ class GeneratorAnalyzer:
             "P_MAX_FORECAST",
             ## Added ## - Pmax discrepancy validation
             "pmax_discrepancy_mw",
-            "pmax_discrepancy_percentage", 
+            "pmax_discrepancy_percentage",
             "pmax_discrepancy_flag",
             # Enhanced metrics
             "generator_capacity_mw",
@@ -2198,23 +2214,33 @@ class GeneratorAnalyzer:
             ## Added ## - Pmax discrepancy metrics
             "pmax_discrepancy_mw": (
                 merged_df.pmax_Actual.iloc[0] - merged_df.pmax_Forecast.iloc[0]
-                if pd.notna(merged_df.pmax_Actual.iloc[0]) and pd.notna(merged_df.pmax_Forecast.iloc[0])
+                if pd.notna(merged_df.pmax_Actual.iloc[0])
+                and pd.notna(merged_df.pmax_Forecast.iloc[0])
                 else None
             ),
             "pmax_discrepancy_percentage": (
-                abs(merged_df.pmax_Actual.iloc[0] - merged_df.pmax_Forecast.iloc[0]) / 
-                max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0]) * 100
-                if pd.notna(merged_df.pmax_Actual.iloc[0]) and pd.notna(merged_df.pmax_Forecast.iloc[0])
-                and max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0]) > 0
+                abs(merged_df.pmax_Actual.iloc[0] - merged_df.pmax_Forecast.iloc[0])
+                / max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0])
+                * 100
+                if pd.notna(merged_df.pmax_Actual.iloc[0])
+                and pd.notna(merged_df.pmax_Forecast.iloc[0])
+                and max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0])
+                > 0
                 else None
             ),
             "pmax_discrepancy_flag": (
-                abs(merged_df.pmax_Actual.iloc[0] - merged_df.pmax_Forecast.iloc[0]) / 
-                max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0]) * 100 > 
-                self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"]["percentage_threshold"]
-                if pd.notna(merged_df.pmax_Actual.iloc[0]) and pd.notna(merged_df.pmax_Forecast.iloc[0])
-                and max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0]) >= 
-                self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"]["min_capacity_for_check"]
+                abs(merged_df.pmax_Actual.iloc[0] - merged_df.pmax_Forecast.iloc[0])
+                / max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0])
+                * 100
+                > self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"][
+                    "percentage_threshold"
+                ]
+                if pd.notna(merged_df.pmax_Actual.iloc[0])
+                and pd.notna(merged_df.pmax_Forecast.iloc[0])
+                and max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0])
+                >= self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"][
+                    "min_capacity_for_check"
+                ]
                 else False
             ),
             ## Fixed ## - New capacity-based metrics
