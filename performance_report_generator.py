@@ -22,34 +22,40 @@ warnings.filterwarnings("ignore")
 class PerformanceReportGenerator:
     """Generates comprehensive PDF reports for generator performance analysis."""
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, debug_mode=False):
         self.config = config
+        self.debug_mode = debug_mode
         self.today_date_str = datetime.now().strftime("%Y-%m-%d")
 
         # Set up plotting style
         plt.style.use("default")
         sns.set_palette("husl")
 
+    def _debug_print(self, message: str):
+        """Print debug message only if debug mode is enabled."""
+        if self.debug_mode:
+            print(message)
+
     def _get_pmax_from_resource_db(self, generator_name: str) -> float:
         """Get Pmax value from resource_db (resources.json)."""
         if not hasattr(self, "resource_db") or not self.resource_db:
-            print(
+            self._debug_print(
                 f"Debug: No resource_db available for {generator_name} (resource_db: {getattr(self, 'resource_db', 'Not set')})"
             )
             return None
 
         if generator_name not in self.resource_db:
-            print(
+            self._debug_print(
                 f"Debug: Generator {generator_name} not found in resource_db (available: {len(self.resource_db)} resources)"
             )
             # Show a few example keys for debugging
             example_keys = list(self.resource_db.keys())[:3]
-            print(f"Debug: Example resource_db keys: {example_keys}")
+            self._debug_print(f"Debug: Example resource_db keys: {example_keys}")
             return None
 
         try:
             resource = self.resource_db[generator_name]
-            print(
+            self._debug_print(
                 f"Debug: Found resource for {generator_name}: {resource.keys() if isinstance(resource, dict) else type(resource)}"
             )
             generators = resource.get("generators", [])
@@ -58,24 +64,28 @@ class PerformanceReportGenerator:
                 # Get pmax from the first generator (should be same for all units in the resource)
                 pmax_value = generators[0].get("pmax")
                 if pmax_value is not None:
-                    print(
+                    self._debug_print(
                         f"Debug: Found Pmax {pmax_value} for {generator_name} in resource_db"
                     )
                     return float(pmax_value)
                 else:
-                    print(
+                    self._debug_print(
                         f"Debug: No 'pmax' key in first generator for {generator_name}, keys: {generators[0].keys()}"
                     )
             else:
-                print(f"Debug: No generators list found for {generator_name}")
+                self._debug_print(
+                    f"Debug: No generators list found for {generator_name}"
+                )
         except (KeyError, ValueError, TypeError) as e:
-            print(f"Debug: Error getting Pmax for {generator_name}: {e}")
+            self._debug_print(f"Debug: Error getting Pmax for {generator_name}: {e}")
 
         return None
 
     def _get_pmax_alternative(self, generator_name: str) -> str:
         """Alternative method to get Pmax when resource_db lookup fails."""
-        print(f"Debug: Attempting alternative Pmax lookup for {generator_name}")
+        self._debug_print(
+            f"Debug: Attempting alternative Pmax lookup for {generator_name}"
+        )
 
         # Try multiple data sources for Pmax/capacity information
 
@@ -85,12 +95,16 @@ class PerformanceReportGenerator:
             and self.anomalies_df is not None
             and not self.anomalies_df.empty
         ):
-            print(f"Debug: Checking anomalies_df with {len(self.anomalies_df)} rows")
-            print(f"Debug: anomalies_df columns: {list(self.anomalies_df.columns)}")
+            self._debug_print(
+                f"Debug: Checking anomalies_df with {len(self.anomalies_df)} rows"
+            )
+            self._debug_print(
+                f"Debug: anomalies_df columns: {list(self.anomalies_df.columns)}"
+            )
             matching_rows = self.anomalies_df[
                 self.anomalies_df["generator_name"] == generator_name
             ]
-            print(
+            self._debug_print(
                 f"Debug: Found {len(matching_rows)} matching rows in anomalies_df for {generator_name}"
             )
             if not matching_rows.empty:
@@ -104,7 +118,7 @@ class PerformanceReportGenerator:
                     if col in matching_rows.columns:
                         value = matching_rows[col].iloc[0]
                         if pd.notna(value) and value > 0:
-                            print(
+                            self._debug_print(
                                 f"Debug: Found Pmax {value} for {generator_name} in anomalies_df column {col}"
                             )
                             return f"{float(value):.1f}"
@@ -115,10 +129,14 @@ class PerformanceReportGenerator:
             and self.results_df is not None
             and not self.results_df.empty
         ):
-            print(f"Debug: Checking results_df with {len(self.results_df)} rows")
-            print(f"Debug: results_df columns: {list(self.results_df.columns)}")
+            self._debug_print(
+                f"Debug: Checking results_df with {len(self.results_df)} rows"
+            )
+            self._debug_print(
+                f"Debug: results_df columns: {list(self.results_df.columns)}"
+            )
             matching_rows = self.results_df[self.results_df["name"] == generator_name]
-            print(
+            self._debug_print(
                 f"Debug: Found {len(matching_rows)} matching rows in results_df for {generator_name}"
             )
             if not matching_rows.empty:
@@ -132,7 +150,7 @@ class PerformanceReportGenerator:
                     if col in matching_rows.columns:
                         value = matching_rows[col].iloc[0]
                         if pd.notna(value) and value > 0:
-                            print(
+                            self._debug_print(
                                 f"Debug: Found Pmax {value} for {generator_name} in results_df column {col}"
                             )
                             return f"{float(value):.1f}"
@@ -169,12 +187,14 @@ class PerformanceReportGenerator:
                     if pd.notna(max_actual) and max_actual > 0:
                         # Use 1.2x max actual as rough Pmax estimate
                         estimated_pmax = max_actual * 1.2
-                        print(
+                        self._debug_print(
                             f"Debug: Estimated Pmax {estimated_pmax:.1f} for {generator_name} from max actual {max_actual} in {df_name}"
                         )
                         return f"{estimated_pmax:.1f}*"  # * indicates estimate
 
-        print(f"Debug: No Pmax found for {generator_name} in any data source")
+        self._debug_print(
+            f"Debug: No Pmax found for {generator_name} in any data source"
+        )
         return "N/A"
 
     def _filter_generators_for_report(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -232,12 +252,12 @@ class PerformanceReportGenerator:
         self.anomalies_df = anomalies_df if anomalies_df is not None else pd.DataFrame()
 
         # Debug information about available data sources
-        print(f"Debug: Report generation started with:")
-        print(f"  - resource_db: {len(self.resource_db)} resources")
-        print(
+        self._debug_print(f"Debug: Report generation started with:")
+        self._debug_print(f"  - resource_db: {len(self.resource_db)} resources")
+        self._debug_print(
             f"  - results_df: {len(self.results_df)} rows, columns: {list(self.results_df.columns) if len(self.results_df) > 0 else 'Empty'}"
         )
-        print(
+        self._debug_print(
             f"  - anomalies_df: {len(self.anomalies_df)} rows, columns: {list(self.anomalies_df.columns) if len(self.anomalies_df) > 0 else 'Empty'}"
         )
 
@@ -285,13 +305,13 @@ class PerformanceReportGenerator:
 
     def _create_advanced_metrics_section(self, pdf: PdfPages, results_df: pd.DataFrame):
         """Create advanced metrics analysis section."""
-        print(
+        self._debug_print(
             f"🔍 DEBUG: Creating Advanced Metrics section with {len(results_df)} generators"
         )
 
         fig = plt.figure(figsize=(11, 8.5))
         fig.suptitle(
-            "Advanced Forecast Metrics Analysis", fontsize=16, fontweight="bold"
+            "PLACEHOLDER: Advanced Forecast Metrics Analysis", fontsize=16, fontweight="bold"
         )
 
         if len(results_df) == 0:
@@ -312,8 +332,12 @@ class PerformanceReportGenerator:
 
         # Apply filtering to remove small generators
         filtered_results = self._filter_generators_for_report(results_df)
-        print(f"🔍 DEBUG: After filtering: {len(filtered_results)} generators")
-        print(f"🔍 DEBUG: Available columns: {list(filtered_results.columns)}")
+        self._debug_print(
+            f"🔍 DEBUG: After filtering: {len(filtered_results)} generators"
+        )
+        self._debug_print(
+            f"🔍 DEBUG: Available columns: {list(filtered_results.columns)}"
+        )
 
         # Check if required advanced metrics columns are available
         required_columns = ["consistency_score", "volatility_score"]
@@ -322,12 +346,14 @@ class PerformanceReportGenerator:
         ]
 
         if missing_columns:
-            print(f"⚠️  DEBUG: Missing columns for Advanced Metrics: {missing_columns}")
+            self._debug_print(
+                f"⚠️  DEBUG: Missing columns for Advanced Metrics: {missing_columns}"
+            )
             # Show message about missing data
             ax = plt.subplot(111)
             ax.axis("off")
 
-            message_text = f"""Advanced Forecast Metrics Analysis
+            message_text = f"""PLACEHOLDER: Advanced Forecast Metrics Analysis
             
 Required metrics data is not available in this analysis run.
 Missing columns: {', '.join(missing_columns)}
@@ -360,10 +386,10 @@ CURRENT ANALYSIS INCLUDES:
 
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
-            print("📊 Advanced Metrics section: Missing required columns")
+            self._debug_print("📊 Advanced Metrics section: Missing required columns")
             return
 
-        print(
+        self._debug_print(
             "✅ DEBUG: All required columns present, creating full Advanced Metrics section"
         )
 
@@ -582,7 +608,7 @@ CURRENT ANALYSIS INCLUDES:
         self, pdf: PdfPages, results_df: pd.DataFrame, anomalies_df: pd.DataFrame
     ):
         """Create statistical anomaly detection section."""
-        print(
+        self._debug_print(
             f"🔍 DEBUG: Creating Statistical Anomaly section with {len(results_df)} generators and {len(anomalies_df) if anomalies_df is not None else 0} anomalies"
         )
 
@@ -1103,7 +1129,7 @@ To enable anomaly detection:
                 ],
                 [
                     "Chronic Error",
-                    len(anomalies_df) if anomalies_df is not None else 0,
+                    len(set(alert.get("main_name", alert.get("generator", "")) for alert in (alerts or []) if "CHRONIC" in alert.get("alert_type", "") and (alert.get("main_name") or alert.get("generator")))) if alerts else 0,
                 ],
                 [
                     "Median RMSE",
@@ -2331,8 +2357,21 @@ To enable anomaly detection:
             # Performance by fuel type - centered and larger
             if "fuel_type" in filtered_results.columns:
                 ax_fuel = plt.subplot(111)  # Take up the entire figure
+                
+                # Clean and debug fuel type data
+                fuel_data = filtered_results.copy()
+                fuel_data['fuel_type'] = fuel_data['fuel_type'].fillna('Unknown').astype(str)
+                fuel_data['fuel_type'] = fuel_data['fuel_type'].str.strip().str.replace('"', '')
+                fuel_data['fuel_type'] = fuel_data['fuel_type'].replace('', 'Unknown')
+                
+                # Debug: Print fuel type distribution
+                fuel_counts = fuel_data['fuel_type'].value_counts()
+                print(f"🔍 DEBUG: Fuel type distribution in report:")
+                for fuel, count in fuel_counts.items():
+                    print(f"   {fuel}: {count} generators")
+                
                 fuel_rmse = (
-                    filtered_results.groupby("fuel_type")["RMSE_over_generation"]
+                    fuel_data.groupby("fuel_type")["RMSE_over_generation"]
                     .mean()
                     .sort_values(ascending=False)
                 )

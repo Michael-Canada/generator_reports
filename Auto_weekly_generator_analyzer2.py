@@ -7,10 +7,11 @@
 # Set MIN_MW_TO_BE_ANALYZED to, say, 70 MW for faster debugging
 # Set FULL_PRODUCTION_RUN = 20 for analysis of all generators with capacity >= 20 MW
 #
+# NOTE: MIN_MW_TO_BE_ANALYZED controls PDF report inclusion, NOT data loading
+# Generators are loaded regardless of this threshold, but only included in PDF if they meet criteria
+#
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = (
-    1000  # User optimized setting - was 1200, changed back to user preference
-)
+MIN_MW_TO_BE_ANALYZED = 750  # PDF report threshold - generators included in reports if capacity OR generation >= this value
 RUN_BID_VALIDATION = (
     False  # User enabled setting - was False, changed back to user preference
 )
@@ -811,6 +812,28 @@ class AnomalyDetector:
         if len(merged_df) == 0:
             return []
 
+        # CRITICAL FIX: Filter to only last 6 weeks of data for chronic error detection
+        six_weeks_ago = pd.Timestamp.now(tz="UTC") - pd.DateOffset(weeks=6)
+
+        # Ensure timestamps have timezone info for proper comparison
+        if merged_df["timestamp"].dt.tz is None:
+            # If timestamps are timezone-naive, assume they're UTC
+            merged_df = merged_df.copy()
+            merged_df["timestamp"] = pd.to_datetime(
+                merged_df["timestamp"]
+            ).dt.tz_localize("UTC")
+        else:
+            # If timestamps have timezone, convert to UTC
+            merged_df = merged_df.copy()
+            merged_df["timestamp"] = pd.to_datetime(
+                merged_df["timestamp"]
+            ).dt.tz_convert("UTC")
+
+        recent_data = merged_df[merged_df["timestamp"] > six_weeks_ago].copy()
+
+        if len(recent_data) == 0:
+            return []
+
         config = self.config.ANOMALY_DETECTION["chronic_error_detection"]
         min_days_in_window = config["min_days_in_window"]
         window_size = config["window_size"]
@@ -820,16 +843,16 @@ class AnomalyDetector:
         min_hours_per_day = config["min_hours_per_day"]
 
         # Sort by timestamp
-        df_sorted = merged_df.sort_values("timestamp").copy()
+        df_sorted = recent_data.sort_values("timestamp").copy()
 
         # Add date column
         df_sorted["date"] = df_sorted["timestamp"].dt.date
 
         # Filter out very low generation periods to avoid noise
-        # Only include hours where BOTH actual AND forecast are >= 5MW
+        # Include hours where EITHER actual OR forecast are >= 5MW (to avoid missing operational periods)
         df_filtered = df_sorted[
             (df_sorted["actual_pg"] >= min_generation)
-            & (df_sorted["fcst_pg"] >= min_generation)
+            | (df_sorted["fcst_pg"] >= min_generation)
         ].copy()
 
         if len(df_filtered) == 0:
@@ -1247,7 +1270,11 @@ class AnomalyDetector:
 class GeneratorAnalyzer:
     """Main class for generator forecast analysis."""
 
-    def __init__(self):
+    def __init__(self, debug_mode=False):
+        self.debug_mode = debug_mode
+        # Initialize critical attributes first to prevent AttributeError
+        self.generators = pd.DataFrame()  # Safety fallback
+
         self.config = Config()
         self.api_client = APIClient()
         self.data_processor = DataProcessor()
@@ -1271,15 +1298,49 @@ class GeneratorAnalyzer:
         )
         self.today_date_str = datetime.now().strftime("%Y-%m-%d")
 
+        # Complete initialization
+        self._post_init()
+
+    def _debug_print(self, message: str):
+        """Print debug message only if debug mode is enabled."""
+        if self.debug_mode:
+            print(message)
+
+    def _post_init(self):
+        """Complete the initialization after _debug_print is defined."""
         self.market_config = self.config.get_current_config()
 
         ## Added ## - Initialize ResourceDB for complete generator identification FIRST
         self.resource_db = {}
         if self.config.RESOURCEDB_INTEGRATION["enable_resourcedb"]:
-            self._load_resource_db()
+            try:
+                print("Loading ResourceDB...")
+                self._load_resource_db()
+                print("ResourceDB loaded successfully")
+            except Exception as e:
+                print(f"Error loading ResourceDB: {e}")
+                import traceback
+
+                traceback.print_exc()
 
         # Initialize data
-        self._initialize_data()
+        try:
+            print("Attempting to initialize data...")
+            self._initialize_data()
+            print(
+                f"Data initialization completed. Generators loaded: {hasattr(self, 'generators') and len(getattr(self, 'generators', []))}"
+            )
+            if hasattr(self, "generators") and len(self.generators) == 0:
+                print(
+                    "⚠️  Warning: 0 generators loaded - this might indicate a data loading issue"
+                )
+        except Exception as e:
+            print(f"Error during data initialization: {e}")
+            import traceback
+
+            traceback.print_exc()
+            # Set a default to prevent attribute errors
+            self.generators = pd.DataFrame()
 
         # Initialize population statistics for anomaly detection
         self.population_stats = {}
@@ -1815,21 +1876,25 @@ class GeneratorAnalyzer:
 
         # Debug output for performance score calculation
         if len(all_results_df) > 0:
-            print(f"\nDEBUG: Performance Score Calculation Summary:")
-            print(f"  - Total generators processed: {len(all_results_df)}")
+            self._debug_print(f"\nDEBUG: Performance Score Calculation Summary:")
+            self._debug_print(f"  - Total generators processed: {len(all_results_df)}")
             sample_gen = all_results_df.iloc[0]
-            print(f"  - Sample generator: {sample_gen.get('name', 'Unknown')}")
-            print(f"    * RMSE: {sample_gen.get('RMSE_over_generation', 'N/A'):.2f}")
-            print(
+            self._debug_print(
+                f"  - Sample generator: {sample_gen.get('name', 'Unknown')}"
+            )
+            self._debug_print(
+                f"    * RMSE: {sample_gen.get('RMSE_over_generation', 'N/A'):.2f}"
+            )
+            self._debug_print(
                 f"    * Capacity: {sample_gen.get('generator_capacity_mw', 'N/A'):.2f} MW"
             )
-            print(
+            self._debug_print(
                 f"    * RMSE/Capacity %: {sample_gen.get('rmse_percentage_of_capacity', 'N/A'):.2f}%"
             )
-            print(
+            self._debug_print(
                 f"    * Performance Score: {sample_gen.get('performance_score', 'N/A'):.2f}/100"
             )
-            print(
+            self._debug_print(
                 f"    * Score Formula: 100 - RMSE% = 100 - {sample_gen.get('rmse_percentage_of_capacity', 'N/A'):.2f} = {sample_gen.get('performance_score', 'N/A'):.2f}"
             )
 
@@ -2308,7 +2373,9 @@ class GeneratorAnalyzer:
             from performance_report_generator import PerformanceReportGenerator
 
             print("\n📄 GENERATING COMPREHENSIVE PDF REPORT...")
-            report_generator = PerformanceReportGenerator(self.config)
+            report_generator = PerformanceReportGenerator(
+                self.config, debug_mode=self.debug_mode
+            )
 
             # Get bid validation results if available
             bid_validation_results = None
@@ -3311,14 +3378,14 @@ Combining these files enables:
 
 
 ## add ## - Main execution function
-def main():
+def main(debug_mode=False):
     """Main execution function."""
     try:
         print("=" * 60)
         print("ENHANCED GENERATOR FORECAST ANALYSIS")
         print("=" * 60)
 
-        analyzer = GeneratorAnalyzer()
+        analyzer = GeneratorAnalyzer(debug_mode=debug_mode)
         analyzer.run_batch_analysis()
 
         # Generate and save CSV documentation
@@ -3410,7 +3477,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Enhanced Generator Forecast Analysis")
+    parser.add_argument("--debug", action="store_true", help="Enable debug output")
+    args = parser.parse_args()
+
+    main(debug_mode=args.debug)
 
 ## remove ## - All the old global variables and unstructured code
 ## remove ## - Duplicate imports and path additions
