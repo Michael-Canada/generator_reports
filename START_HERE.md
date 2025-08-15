@@ -2,7 +2,13 @@
 
 ## Purpose
 
-This project analyzes electricity generator forecast performance across major U.S. power markets (MISO, SPP, ERCOT). It identifies generators with poor forecasting accuracy based on the difference between the forecast and actual generation, and also detects chronic over/under-forecasting patterns that could impact market operations.
+This project analyzes the generator forecast performance across the markets (MISO, SPP, ERCOT). It identifies generators with poor forecasting accuracy based on a number of criteria, among which are:
+- RMSE of the difference between the forecast and actual generation (in MW and % of Pmax)
+- temporal radical differences between forecast and actual generation (Chronic over/under-forecasting patterns)
+- Differences in the value of Pmax between reflow and resourceDB
+- Wrong bids
+- Consistent errors across different fuel types
+
 
 ## Key Capabilities
 

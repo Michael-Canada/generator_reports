@@ -1,15 +1,17 @@
-# old Environment: placebo_api_local
-# Environment: conda activate /Users/michael.simantov/Library/CloudStorage/OneDrive-DrillingInfo/Documents/generator_reports/.conda
+# To activate the environment, run 'activate-gen' in the Terminal. The actual environment is:
+# conda activate /Users/michael.simantov/Library/CloudStorage/OneDrive-DrillingInfo/Documents/generator_reports/.conda
 #
+# old Environment: placebo_api_local
 # ==================== DEBUG CONFIGURATION ====================
 # QUICK TESTING MODE:
 # Set MIN_MW_TO_BE_ANALYZED to, say, 70 MW for faster debugging
 # Set FULL_PRODUCTION_RUN = 20 for analysis of all generators with capacity >= 20 MW
 #
+# NOTE: MIN_MW_TO_BE_ANALYZED controls PDF report inclusion, NOT data loading
+# Generators are loaded regardless of this threshold, but only included in PDF if they meet criteria
+#
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = (
-    500  # User optimized setting - was 1200, changed back to user preference
-)
+MIN_MW_TO_BE_ANALYZED = 500  # PDF report threshold - generators included in reports if capacity OR generation >= this value
 RUN_BID_VALIDATION = (
     False  # User enabled setting - was False, changed back to user preference
 )
@@ -51,6 +53,7 @@ import json
 import random
 from datetime import datetime
 from typing import NamedTuple, Dict, Optional, Tuple, List
+from datetime import datetime, date
 
 ## added ## - New imports for enhanced analysis
 from scipy import stats
@@ -228,7 +231,7 @@ class Config:
         },
         ## Added ## - Pmax discrepancy validation
         "pmax_discrepancy_detection": {
-            "percentage_threshold": 5.0,  # Flag if difference > 5%
+            "percentage_threshold": 5.0,  # Flag if difference > 5%.
             "min_capacity_for_check": 10.0,  # Only check generators >= 10 MW
             "alert_threshold": 10.0,  # Create high priority alert if difference > 10%
         },
@@ -681,7 +684,10 @@ class AnomalyDetector:
         self.metrics_calc = MetricsCalculator()
 
     def detect_anomalies(
-        self, results_df: pd.DataFrame, merged_data_list: List[pd.DataFrame] = None
+        self,
+        results_df: pd.DataFrame,
+        merged_data_list: List[pd.DataFrame] = None,
+        analyzer: "GeneratorAnalyzer" = None,
     ) -> Tuple[pd.DataFrame, List[dict]]:
         """Detect anomalous generators and create alerts with complete identification."""
         if len(results_df) == 0:
@@ -737,9 +743,18 @@ class AnomalyDetector:
 
             ## Added ## - Check for Pmax discrepancy
             pmax_discrepancy_alert = None
-            if row.get("pmax_discrepancy_flag", False):
+            if (
+                row.get("large_pmax_diff_resource_reflow_flag", False)
+                and analyzer
+                and orig_name in analyzer.resource_db
+            ):
                 pmax_discrepancy_alert = self._create_pmax_discrepancy_alert(
-                    orig_name, main_name, plant_id, unit_id, row
+                    orig_name,
+                    main_name,
+                    plant_id,
+                    unit_id,
+                    row,
+                    analyzer.resource_db[orig_name]["physical_properties"]["pmax"],
                 )
 
             # Create anomaly record if significant
@@ -750,7 +765,7 @@ class AnomalyDetector:
                 in [ForecastPerformance.POOR, ForecastPerformance.CRITICAL]
                 or len(chronic_errors) > 0
                 or row.get(
-                    "pmax_discrepancy_flag", False
+                    "large_pmax_diff_resource_reflow_flag", False
                 )  # Added Pmax discrepancy check
             )
 
@@ -775,12 +790,18 @@ class AnomalyDetector:
                     "chronic_errors_detected": len(chronic_errors),
                     "chronic_error_details": chronic_errors,
                     ## Added ## - Pmax discrepancy information
-                    "pmax_discrepancy_flag": row.get("pmax_discrepancy_flag", False),
-                    "pmax_discrepancy_percentage": row.get(
-                        "pmax_discrepancy_percentage", None
+                    "large_pmax_diff_resource_reflow_flag": row.get(
+                        "large_pmax_diff_resource_reflow_flag", False
                     ),
-                    "pmax_discrepancy_mw": row.get("pmax_discrepancy_mw", None),
-                    "pmax_actual": row.get("P_MAX_ACTUAL", None),
+                    "large_pmax_diff_resource_reflow_percentage": row.get(
+                        "large_pmax_diff_resource_reflow_percentage", None
+                    ),
+                    "large_pmax_diff_resource_reflow_mw": row.get(
+                        "large_pmax_diff_resource_reflow_mw", None
+                    ),
+                    "large_pmax_diff_resource_reflow_actual": row.get(
+                        "large_pmax_diff_resource_reflow_actual", None
+                    ),
                     "pmax_forecast": row.get("P_MAX_FORECAST", None),
                 }
 
@@ -810,6 +831,28 @@ class AnomalyDetector:
         if len(merged_df) == 0:
             return []
 
+        # CRITICAL FIX: Filter to only last 6 weeks of data for chronic error detection
+        six_weeks_ago = pd.Timestamp.now(tz="UTC") - pd.DateOffset(weeks=6)
+
+        # Ensure timestamps have timezone info for proper comparison
+        if merged_df["timestamp"].dt.tz is None:
+            # If timestamps are timezone-naive, assume they're UTC
+            merged_df = merged_df.copy()
+            merged_df["timestamp"] = pd.to_datetime(
+                merged_df["timestamp"]
+            ).dt.tz_localize("UTC")
+        else:
+            # If timestamps have timezone, convert to UTC
+            merged_df = merged_df.copy()
+            merged_df["timestamp"] = pd.to_datetime(
+                merged_df["timestamp"]
+            ).dt.tz_convert("UTC")
+
+        recent_data = merged_df[merged_df["timestamp"] > six_weeks_ago].copy()
+
+        if len(recent_data) == 0:
+            return []
+
         config = self.config.ANOMALY_DETECTION["chronic_error_detection"]
         min_days_in_window = config["min_days_in_window"]
         window_size = config["window_size"]
@@ -819,12 +862,13 @@ class AnomalyDetector:
         min_hours_per_day = config["min_hours_per_day"]
 
         # Sort by timestamp
-        df_sorted = merged_df.sort_values("timestamp").copy()
+        df_sorted = recent_data.sort_values("timestamp").copy()
 
         # Add date column
         df_sorted["date"] = df_sorted["timestamp"].dt.date
 
         # Filter out very low generation periods to avoid noise
+        # Include hours where EITHER actual OR forecast are >= 5MW (to avoid missing operational periods)
         df_filtered = df_sorted[
             (df_sorted["actual_pg"] >= min_generation)
             | (df_sorted["fcst_pg"] >= min_generation)
@@ -1101,12 +1145,13 @@ class AnomalyDetector:
         plant_id: int,
         unit_id: str,
         row: pd.Series,
+        resourceDB_pmax: float,
     ) -> dict:
         """Create an alert for Pmax discrepancy between reflow and ResourceDB."""
         pmax_actual = row.get("P_MAX_ACTUAL", "N/A")
         pmax_forecast = row.get("P_MAX_FORECAST", "N/A")
-        discrepancy_pct = row.get("pmax_discrepancy_percentage", 0)
-        discrepancy_mw = row.get("pmax_discrepancy_mw", 0)
+        discrepancy_pct = row.get("large_pmax_diff_resource_reflow_percentage", 0)
+        discrepancy_mw = row.get("large_pmax_diff_resource_reflow_mw", 0)
 
         # Determine severity based on discrepancy percentage
         config = self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"]
@@ -1126,10 +1171,10 @@ class AnomalyDetector:
             "severity": severity,
             "message": f"Generator {orig_name} (Plant {plant_id}, Unit {unit_id}): "
             f"Pmax discrepancy detected - {discrepancy_pct:.1f}% difference "
-            f"({discrepancy_mw:.1f} MW) between reflow ({pmax_actual} MW) and ResourceDB ({pmax_forecast} MW)",
+            f"({discrepancy_mw:.1f} MW) between reflow ({pmax_actual} MW) and ResourceDB ({resourceDB_pmax} MW)",
             "details": {
                 "pmax_reflow": pmax_actual,
-                "pmax_resourcedb": pmax_forecast,
+                "pmax_resourcedb": resourceDB_pmax,
                 "discrepancy_mw": discrepancy_mw,
                 "discrepancy_percentage": discrepancy_pct,
                 "threshold_percentage": config["percentage_threshold"],
@@ -1245,7 +1290,11 @@ class AnomalyDetector:
 class GeneratorAnalyzer:
     """Main class for generator forecast analysis."""
 
-    def __init__(self):
+    def __init__(self, debug_mode=False):
+        self.debug_mode = debug_mode
+        # Initialize critical attributes first to prevent AttributeError
+        self.generators = pd.DataFrame()  # Safety fallback
+
         self.config = Config()
         self.api_client = APIClient()
         self.data_processor = DataProcessor()
@@ -1269,15 +1318,49 @@ class GeneratorAnalyzer:
         )
         self.today_date_str = datetime.now().strftime("%Y-%m-%d")
 
+        # Complete initialization
+        self._post_init()
+
+    def _debug_print(self, message: str):
+        """Print debug message only if debug mode is enabled."""
+        if self.debug_mode:
+            print(message)
+
+    def _post_init(self):
+        """Complete the initialization after _debug_print is defined."""
         self.market_config = self.config.get_current_config()
 
         ## Added ## - Initialize ResourceDB for complete generator identification FIRST
         self.resource_db = {}
         if self.config.RESOURCEDB_INTEGRATION["enable_resourcedb"]:
-            self._load_resource_db()
+            try:
+                print("Loading ResourceDB...")
+                self._load_resource_db()
+                print("ResourceDB loaded successfully")
+            except Exception as e:
+                print(f"Error loading ResourceDB: {e}")
+                import traceback
+
+                traceback.print_exc()
 
         # Initialize data
-        self._initialize_data()
+        try:
+            print("Attempting to initialize data...")
+            self._initialize_data()  # There is a bug in creating the self.generators data. The resourceDB file is not used due to name conventions.
+            print(
+                f"Data initialization completed. Generators loaded: {hasattr(self, 'generators') and len(getattr(self, 'generators', []))}"
+            )
+            if hasattr(self, "generators") and len(self.generators) == 0:
+                print(
+                    "⚠️  Warning: 0 generators loaded - this might indicate a data loading issue"
+                )
+        except Exception as e:
+            print(f"Error during data initialization: {e}")
+            import traceback
+
+            traceback.print_exc()
+            # Set a default to prevent attribute errors
+            self.generators = pd.DataFrame()
 
         # Initialize population statistics for anomaly detection
         self.population_stats = {}
@@ -1621,19 +1704,29 @@ class GeneratorAnalyzer:
         # Load generators data
         self.generators = self._load_generators()
 
+        # # MS adds this for debug
+        # self.generators = self.generators[self.generators.name.str.contains("JORDAN")]
+
         # Load supporting data
         if self.config.GO_TO_GCLOUD:
             self.all_generators = self.api_client.get_dataframe(
                 f"/{self.config.MARKET}/cluster_generations.csv"
             )
-            if self.all_generators is not None:
-                # Enhance all_generators with plant_id and unit_id information
-                self.all_generators = self._enhance_all_generators_with_identifiers(
-                    self.all_generators
-                )
-                self.all_generators.to_csv(
-                    f"all_generators_{self.config.MARKET}.csv", index=False
-                )
+
+            # # MS adds this for debug
+            # self.all_generators = self.all_generators[
+            #     self.all_generators.uid.str.contains("JORDAN")
+            # ]
+
+            # MS closes these lines:forecast_info["pmax"]
+            # if self.all_generators is not None:
+            #     # Enhance all_generators with plant_id and unit_id information
+            #     self.all_generators = self._enhance_all_generators_with_identifiers(
+            #         self.all_generators
+            #     )
+            #     self.all_generators.to_csv(
+            #         f"all_generators_{self.config.MARKET}.csv", index=False
+            #     )
         else:
             self.all_generators = pd.read_csv(
                 f"all_generators_{self.config.MARKET}.csv"
@@ -1674,7 +1767,7 @@ class GeneratorAnalyzer:
             if generator_name in self.resource_db:
                 end_date = self.resource_db[generator_name].get("end_date")
                 if end_date is not None:
-                    from datetime import datetime, date
+                    # from datetime import datetime, date
 
                     # Parse the end_date string (format: YYYY-MM-DD)
                     retirement_date = datetime.strptime(end_date, "%Y-%m-%d").date()
@@ -1805,22 +1898,35 @@ class GeneratorAnalyzer:
         if len(all_results_df) == 0:
             return pd.DataFrame()
 
-        # Calculate composite performance score (0-100, higher = better)
+        # Calculate performance score (0-100, higher = better)
+        # Based solely on inverted RMSE percentage (lower RMSE = higher score)
         all_results_df["performance_score"] = (
-            # Use percentage-based RMSE (inverted so lower RMSE = higher score)
-            (
-                100
-                - all_results_df["rmse_percentage_of_capacity"].fillna(50).clip(0, 100)
-            )
-            * 0.70  # 70% weight
-            + (all_results_df["R_SQUARED"] * 100).clip(0, 100) * 0.20  # 20% weight
-            + (all_results_df["consistency_score"] * 100).clip(0, 100)
-            * 0.05  # 5% weight
-            +
-            # Volatility score (inverted so lower volatility = higher score)
-            (100 - all_results_df["volatility_score"].fillna(50).clip(0, 100))
-            * 0.05  # 5% weight
+            100 - all_results_df["rmse_percentage_of_capacity"].fillna(50).clip(0, 100)
         ).clip(0, 100)
+
+        # Debug output for performance score calculation
+        if len(all_results_df) > 0:
+            self._debug_print(f"\nDEBUG: Performance Score Calculation Summary:")
+            self._debug_print(f"  - Total generators processed: {len(all_results_df)}")
+            sample_gen = all_results_df.iloc[0]
+            self._debug_print(
+                f"  - Sample generator: {sample_gen.get('name', 'Unknown')}"
+            )
+            self._debug_print(
+                f"    * RMSE: {sample_gen.get('RMSE_over_generation', 'N/A'):.2f}"
+            )
+            self._debug_print(
+                f"    * Capacity: {sample_gen.get('generator_capacity_mw', 'N/A'):.2f} MW"
+            )
+            self._debug_print(
+                f"    * RMSE/Capacity %: {sample_gen.get('rmse_percentage_of_capacity', 'N/A'):.2f}%"
+            )
+            self._debug_print(
+                f"    * Performance Score: {sample_gen.get('performance_score', 'N/A'):.2f}/100"
+            )
+            self._debug_print(
+                f"    * Score Formula: 100 - RMSE% = 100 - {sample_gen.get('rmse_percentage_of_capacity', 'N/A'):.2f} = {sample_gen.get('performance_score', 'N/A'):.2f}"
+            )
 
         # Rank generators (1 = best)
         all_results_df["overall_rank"] = all_results_df["performance_score"].rank(
@@ -1896,9 +2002,9 @@ class GeneratorAnalyzer:
             "P_MAX_ACTUAL",
             "P_MAX_FORECAST",
             ## Added ## - Pmax discrepancy validation
-            "pmax_discrepancy_mw",
-            "pmax_discrepancy_percentage",
-            "pmax_discrepancy_flag",
+            "large_pmax_diff_resource_reflow_mw",
+            "large_pmax_diff_resource_reflow_percentage",
+            "large_pmax_diff_resource_reflow_flag",
             # Enhanced metrics
             "generator_capacity_mw",
             "rmse_percentage_of_capacity",
@@ -2000,8 +2106,8 @@ class GeneratorAnalyzer:
                 return None, None
             # Add metadata to forecast data
             forecast_data["fuel"] = forecast_info["fuel"].values[0]
-            forecast_data["pmin"] = forecast_info["pmin"].values[0]
-            forecast_data["pmax"] = forecast_info["pmax"].values[0]
+            forecast_data["pmin"] = forecast_data["generation"].min()
+            forecast_data["pmax"] = forecast_data["generation"].max()
         elif self.config.MARKET == "spp":
             if forecast_data is None or len(forecast_data) == 0:
                 return None, None
@@ -2193,6 +2299,7 @@ class GeneratorAnalyzer:
         return {
             "generated_uid": merged_df.generator_uid.iloc[0],
             "name": merged_df.name.iloc[0],
+            "orig_name": merged_df.orig_name.iloc[0],
             "unit_id": merged_df.unit_id.iloc[0],
             "fuel_type": merged_df.fuel_type.iloc[0],
             "zone_uid": merged_df.zone_uid.iloc[0],
@@ -2238,6 +2345,82 @@ class GeneratorAnalyzer:
                 if pd.notna(merged_df.pmax_Actual.iloc[0])
                 and pd.notna(merged_df.pmax_Forecast.iloc[0])
                 and max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0])
+                >= self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"][
+                    "min_capacity_for_check"
+                ]
+                else False
+            ),
+            "large_pmax_diff_resource_reflow_percentage": (
+                abs(
+                    merged_df.pmax_Actual.iloc[0]
+                    - self.resource_db[merged_df.orig_name.iloc[0]][
+                        "physical_properties"
+                    ]["pmax"]
+                )
+                / max(
+                    merged_df.pmax_Actual.iloc[0],
+                    self.resource_db[merged_df.orig_name.iloc[0]][
+                        "physical_properties"
+                    ]["pmax"],
+                )
+                * 100
+                if pd.notna(merged_df.pmax_Actual.iloc[0])
+                and pd.notna(
+                    self.resource_db[merged_df.orig_name.iloc[0]][
+                        "physical_properties"
+                    ]["pmax"]
+                )
+                and max(
+                    merged_df.pmax_Actual.iloc[0],
+                    self.resource_db[merged_df.orig_name.iloc[0]][
+                        "physical_properties"
+                    ]["pmax"],
+                )
+                > 0
+                else None
+            ),
+            "large_pmax_diff_resource_reflow_mw": (
+                merged_df.pmax_Actual.iloc[0]
+                - self.resource_db[merged_df.orig_name.iloc[0]]["physical_properties"][
+                    "pmax"
+                ]
+                if pd.notna(merged_df.pmax_Actual.iloc[0])
+                and pd.notna(
+                    self.resource_db[merged_df.orig_name.iloc[0]][
+                        "physical_properties"
+                    ]["pmax"]
+                )
+                else None
+            ),
+            "large_pmax_diff_resource_reflow_flag": (
+                abs(
+                    merged_df.pmax_Actual.iloc[0]
+                    - self.resource_db[merged_df.orig_name.iloc[0]][
+                        "physical_properties"
+                    ]["pmax"]
+                )
+                / max(
+                    merged_df.pmax_Actual.iloc[0],
+                    self.resource_db[merged_df.orig_name.iloc[0]][
+                        "physical_properties"
+                    ]["pmax"],
+                )
+                * 100
+                > self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"][
+                    "percentage_threshold"
+                ]
+                if pd.notna(merged_df.pmax_Actual.iloc[0])
+                and pd.notna(
+                    self.resource_db[merged_df.orig_name.iloc[0]][
+                        "physical_properties"
+                    ]["pmax"]
+                )
+                and max(
+                    merged_df.pmax_Actual.iloc[0],
+                    self.resource_db[merged_df.orig_name.iloc[0]][
+                        "physical_properties"
+                    ]["pmax"],
+                )
                 >= self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"][
                     "min_capacity_for_check"
                 ]
@@ -2297,7 +2480,9 @@ class GeneratorAnalyzer:
             from performance_report_generator import PerformanceReportGenerator
 
             print("\n📄 GENERATING COMPREHENSIVE PDF REPORT...")
-            report_generator = PerformanceReportGenerator(self.config)
+            report_generator = PerformanceReportGenerator(
+                self.config, debug_mode=self.debug_mode
+            )
 
             # Get bid validation results if available
             bid_validation_results = None
@@ -2829,6 +3014,7 @@ class GeneratorAnalyzer:
 
             # OPTIMIZATION: Use bulk data fetching for this batch
             try:
+                # fail_deliberately()
                 results = self._analyze_batch_optimized(batch_generator_indices)
             except Exception as e:
                 print(
@@ -2836,6 +3022,7 @@ class GeneratorAnalyzer:
                 )
                 # Fallback to original method
                 results = Parallel(n_jobs=self.config.N_JOBS)(
+                    # results = Parallel(n_jobs=1)(
                     delayed(self.analyze_single_generator)(i)
                     for i in batch_generator_indices
                 )
@@ -2857,7 +3044,7 @@ class GeneratorAnalyzer:
             if found_results:
                 ## Enhanced ## - Pass merged data for chronic error detection
                 batch_anomalies, batch_alerts = self.anomaly_detector.detect_anomalies(
-                    results_df, batch_merged_data
+                    results_df, batch_merged_data, self
                 )
                 all_anomalies.append(batch_anomalies)
                 all_alerts.extend(batch_alerts)
@@ -3300,14 +3487,14 @@ Combining these files enables:
 
 
 ## add ## - Main execution function
-def main():
+def main(debug_mode=False):
     """Main execution function."""
     try:
         print("=" * 60)
         print("ENHANCED GENERATOR FORECAST ANALYSIS")
         print("=" * 60)
 
-        analyzer = GeneratorAnalyzer()
+        analyzer = GeneratorAnalyzer(debug_mode=debug_mode)
         analyzer.run_batch_analysis()
 
         # Generate and save CSV documentation
@@ -3399,7 +3586,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Enhanced Generator Forecast Analysis")
+    parser.add_argument("--debug", action="store_true", help="Enable debug output")
+    args = parser.parse_args()
+
+    main(debug_mode=args.debug)
 
 ## remove ## - All the old global variables and unstructured code
 ## remove ## - Duplicate imports and path additions
