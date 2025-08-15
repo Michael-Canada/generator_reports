@@ -11,9 +11,9 @@
 # Generators are loaded regardless of this threshold, but only included in PDF if they meet criteria
 #
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = 1000  # PDF report threshold - generators included in reports if capacity OR generation >= this value
+MIN_MW_TO_BE_ANALYZED = 700  # PDF report threshold - generators included in reports if capacity OR generation >= this value
 RUN_BID_VALIDATION = False
-USE_THIS_MARKET = "pjm"  # Options: "miso", "spp", "ercot", "pjm"
+USE_THIS_MARKET = "miso"  # Options: "miso", "spp", "ercot", "pjm"
 
 # ===============================================================
 
@@ -80,6 +80,12 @@ from joblib import Parallel, delayed
 # import date_utils
 # from placebo.utils import snowflake_utils
 # from date_utils import LocalizedDateTime
+
+
+## added ## - Debug function to force fallback to except block
+def fail_deliberately():
+    """Debug function to force exception and test fallback methods."""
+    raise Exception("Deliberately failing to test fallback processing")
 
 
 ## added ## - Performance classification enum
@@ -408,8 +414,8 @@ class APIClient:
             encoded_name = gen_name.replace(" ", "%20")
             # FIXED: Use working endpoint format instead of broken one
             # Old broken URL: f"{self.url_root}/marginalunit/reflow/{market}/?name={encoded_name}"
-            # New working URL: Direct reflow endpoint (same as bid validation)
-            url = f"https://api1.marginalunit.com/reflow/{market}-se/generator?name={encoded_name}"
+            # New working URL: Use collection from market config (e.g., miso-se for PJM)
+            url = f"https://api1.marginalunit.com/reflow/{self.market_config['collection']}/generator?name={encoded_name}"
             try:
                 resp = self.session.get(url, timeout=30)
                 if resp.status_code == 200:
@@ -446,7 +452,7 @@ class APIClient:
         for gen_name in generator_names:
             encoded_name = gen_name.replace(" ", "%20")
             # FIXED: Use working endpoint format instead of broken one
-            url = f"https://api1.marginalunit.com/reflow/{market}-se/generator?name={encoded_name}"
+            url = f"https://api1.marginalunit.com/reflow/{self.market_config['collection']}/generator?name={encoded_name}"
             try:
                 resp = self.session.get(url, timeout=30)
                 if resp.status_code == 200:
@@ -2104,35 +2110,57 @@ class GeneratorAnalyzer:
 
         if self.config.MARKET in ["miso", "pjm"]:
             if (
-                forecast_data is None
-                or forecast_info is None
+                # forecast_data is None
+                forecast_info is None
                 or len(forecast_data) == 0
-                or len(forecast_info) == 0
+                # or len(forecast_info) == 0
             ):
-                return None, None
+                return None
             # Add metadata to forecast data
-            forecast_data["fuel"] = forecast_info["fuel"].values[0]
+            try:
+                forecast_data["fuel"] = forecast_info["fuel"].values[0]
+            except:
+                pass
+
             forecast_data["pmin"] = forecast_data["generation"].min()
             forecast_data["pmax"] = forecast_data["generation"].max()
         elif self.config.MARKET == "spp":
             if forecast_data is None or len(forecast_data) == 0:
-                return None, None
+                return None
             # Add dummy values for SPP
             forecast_data["fuel"] = "DUMMY"
             forecast_data["pmin"] = "DUMMY"
             forecast_data["pmax"] = "DUMMY"
 
-        return forecast_data, forecast_info
+        return forecast_data
 
     def _process_forecast_timestamps(self, forecast_data: pd.DataFrame) -> pd.DataFrame:
         """Process forecast timestamps based on market type."""
-        if self.config.MARKET in ["miso", "pjm"]:
+        # Safety check - ensure forecast_data is not None and has timestamp column
+        if (
+            forecast_data is None
+            or len(forecast_data) == 0
+            or "timestamp" not in forecast_data.columns
+        ):
+            return forecast_data
+
+        if self.config.MARKET == "miso":
+            # Convert to datetime and handle timezone - using utc=True for consistency
             forecast_data["timestamp"] = pd.to_datetime(
-                forecast_data["timestamp"]
-            ).dt.tz_localize(None)
-            forecast_data["timestamp"] = forecast_data["timestamp"].dt.tz_localize(
-                "UTC"
+                forecast_data["timestamp"], utc=True
             )
+
+        elif self.config.MARKET == "pjm":
+            # Convert to datetime and handle timezone - PJM timestamps have timezone info like '2023-09-12 00:00:00-04:00'
+            try:
+                # Use utc=True to handle mixed timezone offsets properly
+                forecast_data["timestamp"] = pd.to_datetime(
+                    forecast_data["timestamp"], utc=True
+                )
+            except Exception as e:
+                print(f"ERROR: Exception during PJM timestamp processing: {e}")
+                return forecast_data
+
         elif self.config.MARKET == "spp":
             forecast_data["timestamp"] = forecast_data["timestamp"].apply(
                 self.data_processor.convert_time
@@ -2227,9 +2255,7 @@ class GeneratorAnalyzer:
 
         return merged_df
 
-    def _calculate_forecast_metrics(
-        self, merged_df: pd.DataFrame, forecast_info: Optional[pd.DataFrame]
-    ) -> dict:
+    def _calculate_forecast_metrics(self, merged_df: pd.DataFrame) -> dict:
         """Calculate comprehensive forecast accuracy metrics."""
         # Filter data to recent period
         recent_data = merged_df[
@@ -2792,9 +2818,7 @@ class GeneratorAnalyzer:
             )
 
             # Fetch forecast data
-            forecast_data, forecast_info = self._fetch_forecast_data(
-                name_encoded, actual_generation
-            )
+            forecast_data = self._fetch_forecast_data(name_encoded, actual_generation)
             if forecast_data is None:
                 return None, None
 
@@ -2840,7 +2864,7 @@ class GeneratorAnalyzer:
                     pass
 
             # Calculate metrics
-            results = self._calculate_forecast_metrics(merged_df, forecast_info)
+            results = self._calculate_forecast_metrics(merged_df)
 
             ## Added ## - Enhance results with complete identification
             if results:
@@ -2917,9 +2941,7 @@ class GeneratorAnalyzer:
             )
 
             # Fetch forecast data (still need individual calls for this)
-            forecast_data, forecast_info = self._fetch_forecast_data(
-                name_encoded, actual_generation
-            )
+            forecast_data = self._fetch_forecast_data(name_encoded, actual_generation)
             if forecast_data is None:
                 return None, None
 
@@ -2947,7 +2969,7 @@ class GeneratorAnalyzer:
             merged_df["num_running_hours"] = num_running_hours
 
             # Calculate metrics
-            results = self._calculate_forecast_metrics(merged_df, forecast_info)
+            results = self._calculate_forecast_metrics(merged_df)
 
             ## Added ## - Enhance results with complete identification
             if results:
@@ -3027,7 +3049,9 @@ class GeneratorAnalyzer:
                     f"   ⚠️ Optimized batch processing failed, falling back to standard method: {e}"
                 )
                 # Fallback to original method
+                # MS changes num of jobs to 1:
                 results = Parallel(n_jobs=self.config.N_JOBS)(
+                    # results = Parallel(n_jobs=1)(
                     # results = Parallel(n_jobs=1)(
                     delayed(self.analyze_single_generator)(i)
                     for i in batch_generator_indices
