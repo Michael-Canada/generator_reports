@@ -11,10 +11,10 @@
 # Generators are loaded regardless of this threshold, but only included in PDF if they meet criteria
 #
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = 500  # PDF report threshold - generators included in reports if capacity OR generation >= this value
-RUN_BID_VALIDATION = (
-    False  # User enabled setting - was False, changed back to user preference
-)
+MIN_MW_TO_BE_ANALYZED = 1000  # PDF report threshold - generators included in reports if capacity OR generation >= this value
+RUN_BID_VALIDATION = False
+USE_THIS_MARKET = "pjm"  # Options: "miso", "spp", "ercot", "pjm"
+
 # ===============================================================
 
 """
@@ -30,7 +30,7 @@ Key Features:
 - ## added ## Bid analysis integration for strategic insights
 - ## added ## Performance classification and alerting system
 - ## added ## Market context analysis and trend detection
-- Supports MISO and SPP markets
+- Supports MISO, PJM and SPP markets
 - Processes generators in parallel batches for efficiency
 - Saves results for further analysis
 
@@ -128,7 +128,7 @@ class Config:
     """Configuration settings for the generator analysis."""
 
     # Market configuration
-    MARKET = "miso"  # Options: "miso", "spp", "ercot"
+    MARKET = USE_THIS_MARKET  # Options: "miso", "spp", "ercot", "pjm"
 
     BID_VALIDATION = {
         "enable_bid_validation": RUN_BID_VALIDATION,  # DISABLED - Set to True to enable time-consuming bid validation
@@ -146,7 +146,7 @@ class Config:
                 "miso": "metadata/miso.resourcedb/2024-11-19/",
                 "spp": "metadata/spp.resourcedb/2024-11-19/",
                 "ercot": "metadata/ercot.resourcedb.v2/2024-11-25/",
-                "pjm": "metadata/pjm.resourcedb/2024-11-19/",
+                "pjm": "metadata/miso.resourcedb/2025-06-11/",  # This is not a mistake. It should be miso and not pjm in this line
             },
         },
     }
@@ -168,6 +168,11 @@ class Config:
             "collection": "ercot-rt-se",
             "timezone_offset": "T04:00:00-05:00",
         },
+        "pjm": {
+            "run_version": "pjm",
+            "collection": "miso-se",  # this is not a mistake. It should be miso and not pjm in this line
+            "timezone_offset": "T04:00:00-05:00",
+        },
     }
 
     ## Added ## - ResourceDB integration for complete generator identification
@@ -178,6 +183,7 @@ class Config:
             "miso": "metadata/miso.resourcedb/2024-11-19/resources.json",
             "spp": "metadata/spp.resourcedb/2024-11-19/resources.json",
             "ercot": "metadata/ercot.resourcedb/2024-11-19/resources.json",
+            "pjm": "metadata/miso.resourcedb/2025-06-11/resources.json",  # this is not a mistake. It should be "miso" and not "pjm" here
         },
     }
 
@@ -263,7 +269,7 @@ class Config:
                 "miso": "miso-se",
                 "spp": "spp-se",
                 "ercot": "ercot-rt-se",
-                "pjm": "pjm-se",
+                "pjm": "miso-se",
             },
         }
 
@@ -337,7 +343,7 @@ class APIClient:
 
     # OPTIMIZED BULK METHODS
     def get_batch_generators_data(
-        self, generator_names: List[str], market: str = "miso"
+        self, generator_names: List[str], market: str
     ) -> Dict[str, pd.DataFrame]:
         """
         BULK FETCH: Get actual generation data for multiple generators in one call.
@@ -546,7 +552,7 @@ class DataProcessor:
     @staticmethod
     def extract_date_from_string(string: str, market: str) -> str:
         """Extract date from case string based on market format."""
-        if market == "miso":
+        if market in ["miso", "pjm"]:
             found_date = string.split("_")[2].split("-")[0]
             return f"{found_date[:4]}-{found_date[4:6]}-{found_date[6:]}"
         elif market == "ercot":
@@ -560,7 +566,7 @@ class DataProcessor:
     @staticmethod
     def extract_time_from_string(string: str, market: str) -> str:
         """Extract time from case string based on market format."""
-        if market == "miso":
+        if market in ["miso", "pjm"]:
             return string.split("_")[2].split("-")[1]
         else:
             raise ValueError(f"Time extraction not implemented for market: {market}")
@@ -568,7 +574,7 @@ class DataProcessor:
     @staticmethod
     def convert_case_to_timestamp(case_str: str, market: str) -> Optional[datetime]:
         """Convert case string to UTC timestamp."""
-        if market == "miso":
+        if market in ["miso", "pjm"]:
             match = re.search(r"(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})", case_str)
             if match:
                 date_str = f"{match.group(1)}-{match.group(2)}-{match.group(3)} {match.group(4)}:{match.group(5)}:00"
@@ -2096,7 +2102,7 @@ class GeneratorAnalyzer:
         info_url = f"{base_url}?days_prior=1&uid={name_encoded}&as_of={latest_date}{timezone_offset}"
         forecast_info = self.api_client.get_data_from_full_url(info_url)
 
-        if self.config.MARKET == "miso":
+        if self.config.MARKET in ["miso", "pjm"]:
             if (
                 forecast_data is None
                 or forecast_info is None
@@ -2120,7 +2126,7 @@ class GeneratorAnalyzer:
 
     def _process_forecast_timestamps(self, forecast_data: pd.DataFrame) -> pd.DataFrame:
         """Process forecast timestamps based on market type."""
-        if self.config.MARKET == "miso":
+        if self.config.MARKET in ["miso", "pjm"]:
             forecast_data["timestamp"] = pd.to_datetime(
                 forecast_data["timestamp"]
             ).dt.tz_localize(None)
@@ -3344,7 +3350,7 @@ The generator analysis system produces multiple CSV files, each providing specif
 
 1. ENHANCED all_generators_{market}.csv
    ================================
-   Source: /miso/cluster_generations.csv API + ResourceDB enhancement
+   Source: /miso/cluster_generations.csv API + ResourceDB enhancement (miso can be replaced by other market names, e.g., pjm)
    Purpose: Complete generator inventory with identification and current status
    
    Key Columns & Insights:
@@ -3452,7 +3458,7 @@ The generator analysis system produces multiple CSV files, each providing specif
 === QUALITY TAG DETERMINATION ===
 
 The quality_tag in all_generators_{market}.csv is determined by the upstream API 
-(/miso/cluster_generations.csv) based on:
+(/miso/cluster_generations.csv) based on: (miso can be replaced by other market names, e.g., pjm)
 - Data recency (time since last update)
 - Data completeness (missing data points)
 - Sensor reliability scores
