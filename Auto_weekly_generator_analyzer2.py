@@ -11,7 +11,7 @@
 # Generators are loaded regardless of this threshold, but only included in PDF if they meet criteria
 #
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = 350  # PDF report threshold - generators included in reports if capacity OR generation >= this value
+MIN_MW_TO_BE_ANALYZED = 500  # PDF report threshold - generators included in reports if capacity OR generation >= this value
 RUN_BID_VALIDATION = (
     False  # User enabled setting - was False, changed back to user preference
 )
