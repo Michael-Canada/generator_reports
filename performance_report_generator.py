@@ -920,6 +920,19 @@ To enable anomaly detection:
             bbox=dict(boxstyle="round,pad=0.5", facecolor="lightblue", alpha=0.7),
         )
 
+        # Analysis period note
+        ax.text(
+            0.5,
+            0.3,
+            "⏱️ ANALYSIS PERIOD: All forecast accuracy metrics (RMSE, MAE, R², Performance Scores)\nare calculated using the most recent 6 weeks of data",
+            ha="center",
+            va="center",
+            fontsize=11,
+            fontweight="bold",
+            style="italic",
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="lightyellow", alpha=0.8),
+        )
+
         # Footer
         ax.text(
             0.5,
@@ -2089,66 +2102,17 @@ To enable anomaly detection:
             ax_scatter.legend()
             ax_scatter.grid(True, alpha=0.3)
 
-            # Table of flagged generators
+            # Table of flagged generators - MOVED TO NEW PAGE
+            # Save the current figure first
+            plt.tight_layout()
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+            # Create a new page for the tables
             if flagged_generators > 0:
-                ax_table = plt.subplot2grid((3, 2), (2, 0), colspan=2)
-                ax_table.axis("off")
-
-                # Sort by difference (MW) from large to small (absolute value for sorting)
-                top_flagged = discrepancy_generators.reindex(
-                    discrepancy_generators["pmax_discrepancy_mw"]
-                    .abs()
-                    .sort_values(ascending=False)
-                    .index
-                ).head(min(10, len(discrepancy_generators)))
-
-                table_data = []
-                for _, row in top_flagged.iterrows():
-                    name = (
-                        row["name"][:20] + "..."
-                        if len(row["name"]) > 20
-                        else row["name"]
-                    )
-                    table_data.append(
-                        [
-                            name,
-                            row.get("plant_id", "N/A"),
-                            row.get("unit_id", "N/A"),
-                            f"{row['P_MAX_ACTUAL']:.1f}",
-                            f"{row['P_MAX_FORECAST']:.1f}",
-                            f"{row['pmax_discrepancy_mw']:+.1f}",
-                        ]
-                    )
-
-                headers = [
-                    "Generator",
-                    "Plant ID",
-                    "Unit ID",
-                    "Reflow\n(MW)",
-                    "ResourceDB\n(MW)",
-                    "Difference\n(MW)",
-                ]
-
-                table = ax_table.table(
-                    cellText=table_data,
-                    colLabels=headers,
-                    cellLoc="center",
-                    loc="center",
+                self._create_pmax_discrepancy_tables_page(
+                    pdf, discrepancy_generators, pmax_data
                 )
-                table.auto_set_font_size(False)
-                table.set_fontsize(7)
-                table.scale(1, 1.5)
-
-                # Color code by severity (based on absolute difference)
-                for i, row in enumerate(table_data):
-                    discrepancy_mw = abs(float(row[5]))
-                    if discrepancy_mw >= 50.0:  # High severity for large MW differences
-                        color = "lightcoral"  # High severity
-                    else:
-                        color = "lightyellow"  # Medium severity
-
-                    for j in range(len(headers)):
-                        table[(i + 1, j)].set_facecolor(color)
         else:
             # No discrepancies found
             ax_none = plt.subplot2grid((3, 2), (1, 0), colspan=2)
@@ -2161,6 +2125,162 @@ To enable anomaly detection:
                 va="center",
                 fontsize=14,
                 fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgreen", alpha=0.7),
+            )
+            plt.tight_layout()
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+    def _create_pmax_discrepancy_tables_page(
+        self,
+        pdf: PdfPages,
+        discrepancy_generators: pd.DataFrame,
+        pmax_data: pd.DataFrame,
+    ):
+        """Create a dedicated page for Pmax discrepancy tables."""
+        fig = plt.figure(figsize=(11, 8.5))
+        fig.suptitle(
+            "Pmax Discrepancy Analysis - Detailed Tables",
+            fontsize=16,
+            fontweight="bold",
+        )
+
+        # Table 1: Largest Absolute Discrepancies (Top 15)
+        ax_table1 = plt.subplot2grid((2, 1), (0, 0))
+        ax_table1.axis("off")
+        ax_table1.text(
+            0.5,
+            0.95,
+            "📊 Top 15 Generators with Largest Absolute Discrepancies (>5%)",
+            transform=ax_table1.transAxes,
+            fontsize=12,
+            fontweight="bold",
+            ha="center",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.5),
+        )
+
+        # Sort by absolute difference (largest first) and take top 15
+        top_flagged = discrepancy_generators.reindex(
+            discrepancy_generators["pmax_discrepancy_mw"]
+            .abs()
+            .sort_values(ascending=False)
+            .index
+        ).head(15)
+
+        table_data = []
+        for _, row in top_flagged.iterrows():
+            name = row["name"][:18] + "..." if len(row["name"]) > 18 else row["name"]
+            table_data.append(
+                [
+                    name,
+                    row.get("plant_id", "N/A"),
+                    row.get("unit_id", "N/A"),
+                    f"{row['P_MAX_ACTUAL']:.1f}",
+                    f"{row['P_MAX_FORECAST']:.1f}",
+                    f"{row['pmax_discrepancy_mw']:+.1f}",
+                    f"{row['pmax_discrepancy_percentage']:.1f}%",
+                ]
+            )
+
+        headers = [
+            "Generator",
+            "Plant ID",
+            "Unit ID",
+            "Reflow\n(MW)",
+            "ResourceDB\n(MW)",
+            "Difference\n(MW)",
+            "Disc.\n(%)",
+        ]
+
+        if len(table_data) > 0:
+            table1 = ax_table1.table(
+                cellText=table_data,
+                colLabels=headers,
+                cellLoc="center",
+                loc="center",
+                bbox=[0.05, 0.1, 0.9, 0.8],
+            )
+            table1.auto_set_font_size(False)
+            table1.set_fontsize(8)
+            table1.scale(1, 1.2)
+
+            # Color code by severity
+            for i, row in enumerate(table_data):
+                discrepancy_mw = abs(float(row[5]))
+                if discrepancy_mw >= 50.0:
+                    color = "lightcoral"  # High severity
+                else:
+                    color = "lightyellow"  # Medium severity
+
+                for j in range(len(headers)):
+                    table1[(i + 1, j)].set_facecolor(color)
+
+        # Table 2: Negative Differences (Top 15)
+        negative_diff_gens = pmax_data[pmax_data["pmax_discrepancy_mw"] < 0].copy()
+
+        ax_table2 = plt.subplot2grid((2, 1), (1, 0))
+        ax_table2.axis("off")
+
+        if len(negative_diff_gens) > 0:
+            # Sort by most negative difference first and take top 15
+            negative_diff_gens = negative_diff_gens.sort_values(
+                "pmax_discrepancy_mw"
+            ).head(15)
+
+            ax_table2.text(
+                0.5,
+                0.95,
+                f"⬇️ Top 15 Generators with Negative Differences (Reflow < ResourceDB): {len(pmax_data[pmax_data['pmax_discrepancy_mw'] < 0])} total",
+                transform=ax_table2.transAxes,
+                fontsize=12,
+                fontweight="bold",
+                ha="center",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.5),
+            )
+
+            table_data2 = []
+            for _, row in negative_diff_gens.iterrows():
+                name = (
+                    row["name"][:18] + "..." if len(row["name"]) > 18 else row["name"]
+                )
+                table_data2.append(
+                    [
+                        name,
+                        row.get("plant_id", "N/A"),
+                        row.get("unit_id", "N/A"),
+                        f"{row['P_MAX_ACTUAL']:.1f}",
+                        f"{row['P_MAX_FORECAST']:.1f}",
+                        f"{row['pmax_discrepancy_mw']:+.1f}",
+                        f"{row['pmax_discrepancy_percentage']:.1f}%",
+                    ]
+                )
+
+            if len(table_data2) > 0:
+                table2 = ax_table2.table(
+                    cellText=table_data2,
+                    colLabels=headers,
+                    cellLoc="center",
+                    loc="center",
+                    bbox=[0.05, 0.1, 0.9, 0.8],
+                )
+                table2.auto_set_font_size(False)
+                table2.set_fontsize(8)
+                table2.scale(1, 1.2)
+
+                # Color all negative difference rows with light orange
+                for i in range(len(table_data2)):
+                    for j in range(len(headers)):
+                        table2[(i + 1, j)].set_facecolor("peachpuff")
+        else:
+            ax_table2.text(
+                0.5,
+                0.5,
+                "✅ No Generators with Negative Differences Found",
+                transform=ax_table2.transAxes,
+                fontsize=14,
+                fontweight="bold",
+                ha="center",
+                va="center",
                 bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgreen", alpha=0.7),
             )
 
