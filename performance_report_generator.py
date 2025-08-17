@@ -242,6 +242,7 @@ class PerformanceReportGenerator:
         market: str = "miso",
         output_filename: str = None,
         resource_db: dict = None,
+        bid_validation_enabled: bool = False,
     ) -> str:
         """Generate a comprehensive PDF report with all performance measures."""
 
@@ -250,6 +251,8 @@ class PerformanceReportGenerator:
         # Store dataframes for alternative Pmax lookup
         self.results_df = results_df
         self.anomalies_df = anomalies_df if anomalies_df is not None else pd.DataFrame()
+        # Store bid validation status
+        self.bid_validation_enabled = bid_validation_enabled
 
         # Debug information about available data sources
         self._debug_print(f"Debug: Report generation started with:")
@@ -290,9 +293,8 @@ class PerformanceReportGenerator:
             # Statistical Anomaly Detection
             self._create_statistical_anomaly_section(pdf, results_df, anomalies_df)
 
-            # Bid Validation Results (if available)
-            if bid_validation_results is not None and len(bid_validation_results) > 0:
-                self._create_bid_validation_section(pdf, bid_validation_results)
+            # Bid Validation Results (always shown, with status)
+            self._create_bid_validation_section(pdf, bid_validation_results)
 
             # Operational Characteristics
             self._create_operational_characteristics_section(pdf, results_df)
@@ -2391,8 +2393,13 @@ To enable anomaly detection:
 
             # Issue type distribution
             ax_issues = plt.subplot2grid((3, 2), (1, 0))
-            if "issue_type" in filtered_results.columns:
-                issue_counts = filtered_results["issue_type"].value_counts()
+            issue_type_col = (
+                "validation_type"
+                if "validation_type" in filtered_results.columns
+                else "issue_type"
+            )
+            if issue_type_col in filtered_results.columns:
+                issue_counts = filtered_results[issue_type_col].value_counts()
                 colors = ["red", "orange", "yellow", "lightblue"]
                 ax_issues.pie(
                     issue_counts.values,
@@ -2431,9 +2438,25 @@ To enable anomaly detection:
 
             # Sort by severity and issue type
             severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-            sorted_results = filtered_results.sort_values(
-                [filtered_results["severity"].map(severity_order), "issue_type"]
-            )
+            try:
+                # Add severity order as a new column to avoid Series evaluation issues
+                filtered_results = filtered_results.copy()
+                filtered_results["severity_order"] = filtered_results["severity"].map(
+                    severity_order
+                )
+
+                # Use the correct column name for issue type (validation_type in bid validation)
+                issue_type_col = (
+                    "validation_type"
+                    if "validation_type" in filtered_results.columns
+                    else "issue_type"
+                )
+                sorted_results = filtered_results.sort_values(
+                    ["severity_order", issue_type_col], na_position="last"
+                )
+            except Exception as e:
+                print(f"Warning: Could not sort bid validation results: {e}")
+                sorted_results = filtered_results
 
             table_data = []
             for idx, row in sorted_results.head(10).iterrows():
@@ -2475,7 +2498,9 @@ To enable anomaly detection:
                         ),
                         str(plant_id),
                         str(unit_id),
-                        row.get("issue_type", "Unknown")[:15],
+                        row.get("validation_type", row.get("issue_type", "Unknown"))[
+                            :15
+                        ],
                         row.get("severity", "Unknown"),
                         (
                             f"{pmax:.1f}"
@@ -2516,18 +2541,30 @@ To enable anomaly detection:
                     cellDict[(i, 5)].set_width(0.10)  # Pmax
                     cellDict[(i, 6)].set_width(0.10)  # Fuel
         else:
-            # No bid validation data
+            # No bid validation data - check if bid validation was disabled
             ax_none = plt.subplot2grid((3, 2), (1, 0), colspan=2)
             ax_none.axis("off")
+
+            # Use the stored bid validation status instead of importing
+            if not self.bid_validation_enabled:
+                status_message = "Bid Validation: DISABLED\n\nBid validation is currently disabled in configuration.\nSet RUN_BID_VALIDATION = True to enable bid validation analysis.\n\nWhen enabled, this section will show:\n• Generator bid parameter violations\n• Pmin/Pmax compliance issues\n• Market participation anomalies"
+                bg_color = "lightcoral"
+                text_color = "darkred"
+            else:
+                status_message = "Bid Validation: ENABLED\n\nNo bid validation issues found.\nAll analyzed generators appear to have\nproper bid parameter configurations."
+                bg_color = "lightgreen"
+                text_color = "darkgreen"
+
             ax_none.text(
                 0.5,
                 0.5,
-                "No bid validation data available\n(Bid validation disabled or no issues found)",
+                status_message,
                 ha="center",
                 va="center",
-                fontsize=14,
+                fontsize=12,
                 fontweight="bold",
-                bbox=dict(boxstyle="round,pad=0.5", facecolor="lightblue", alpha=0.7),
+                color=text_color,
+                bbox=dict(boxstyle="round,pad=0.5", facecolor=bg_color, alpha=0.7),
             )
 
         plt.tight_layout()

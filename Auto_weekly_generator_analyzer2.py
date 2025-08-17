@@ -12,8 +12,8 @@
 #
 # FULL_PRODUCTION_RUN = True
 MIN_MW_TO_BE_ANALYZED = 1200  # PDF report threshold - generators included in reports if capacity OR generation >= this value
-RUN_BID_VALIDATION = False
-USE_THIS_MARKET = "pjm"  # Options: "miso", "spp", "ercot", "pjm"
+RUN_BID_VALIDATION = True
+USE_THIS_MARKET = "miso"  # Options: "miso", "spp", "ercot", "pjm"
 
 # ===============================================================
 
@@ -2564,6 +2564,9 @@ class GeneratorAnalyzer:
                 bid_validation_results=bid_validation_results,
                 market=self.config.MARKET,
                 resource_db=self.resource_db,  # Pass resource_db for Pmax lookup
+                bid_validation_enabled=self.config.BID_VALIDATION.get(
+                    "enable_bid_validation", False
+                ),
             )
             print(f"📄 PDF Report generated: {pdf_filename}")
 
@@ -3161,6 +3164,23 @@ class GeneratorAnalyzer:
                         )
             else:
                 print(f"   ⚠️ Batch {batch_idx + 1} completed with no valid results.")
+
+        # Run bid validation if enabled
+        if self.config.BID_VALIDATION.get("enable_bid_validation", False) and hasattr(
+            self, "run_bid_validation"
+        ):
+            print("\n🔍 RUNNING BID VALIDATION...")
+            try:
+                bid_validation_results = self.run_bid_validation()
+                self.bid_validation_results = (
+                    bid_validation_results  # Store results as instance attribute
+                )
+                print(
+                    f"✅ Bid validation completed: {len(bid_validation_results)} issues found"
+                )
+            except Exception as e:
+                print(f"⚠️ Bid validation failed: {e}")
+                print("   Continuing with analysis without bid validation...")
 
         # Generate final comprehensive reports
         if all_results:
