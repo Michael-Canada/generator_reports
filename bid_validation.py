@@ -63,14 +63,25 @@ class BidValidationLevel(Enum):
 class BidValidationType(Enum):
     """Types of bid validation issues."""
 
+    # Minimum Capacity Issues
     FIRST_BLOCK_BELOW_PMIN = "first_block_below_pmin"
-    LAST_BLOCK_INSUFFICIENT = "last_block_insufficient"
-    BID_CURVE_INCONSISTENT = "bid_curve_inconsistent"
-    MISSING_BID_DATA = "missing_bid_data"
     PMIN_PMAX_MISMATCH = "pmin_pmax_mismatch"
+
+    # Maximum Capacity Issues
     PMAX_BELOW_GENERATION = "pmax_below_generation"
-    # MULTI_UNIT_INCONSISTENCY = "multi_unit_inconsistency"  # DISABLED - no unit-level capacity data
+    LAST_BLOCK_INSUFFICIENT = "last_block_insufficient"
+
+    # Bid Curve Structure Issues
+    BID_CURVE_INCONSISTENT = "bid_curve_inconsistent"
     UNREALISTIC_PRICE_JUMPS = "unrealistic_price_jumps"
+    BID_BLOCKS_NON_MONOTONIC = "bid_blocks_non_monotonic"
+
+    # Market Participation Issues
+    MISSING_BID_DATA = "missing_bid_data"
+    INCOMPLETE_BID_CURVE = "incomplete_bid_curve"
+    ZERO_QUANTITY_BLOCKS = "zero_quantity_blocks"
+
+    # MULTI_UNIT_INCONSISTENCY = "multi_unit_inconsistency"  # DISABLED - no unit-level capacity data
 
 
 @dataclass
@@ -520,7 +531,7 @@ class BidValidator:
             if len(blocks) < 2:
                 return results  # Need at least 2 blocks for consistency checks
 
-            # Check for monotonic quantities
+            # Check for monotonic quantities - use specific type for non-monotonic issues
             for i in range(1, len(blocks)):
                 current_quantity = blocks[i].get("quantity", 0)
                 previous_quantity = blocks[i - 1].get("quantity", 0)
@@ -531,7 +542,7 @@ class BidValidator:
                             generator_name=generator_name,
                             plant_id=self._get_plant_id(generator_name),
                             unit_id=self._get_unit_id(generator_name),
-                            validation_type=BidValidationType.BID_CURVE_INCONSISTENT,
+                            validation_type=BidValidationType.BID_BLOCKS_NON_MONOTONIC,
                             severity=BidValidationLevel.HIGH,
                             message=f"Non-monotonic bid curve: Block {i+1} quantity ({current_quantity:.2f}) <= Block {i} quantity ({previous_quantity:.2f})",
                             details={
@@ -545,6 +556,34 @@ class BidValidator:
                             recommendations=[
                                 "Ensure bid block quantities are strictly increasing",
                                 "Review bid curve generation logic",
+                                "Check for data entry errors in bid blocks",
+                            ],
+                            timestamp=datetime.now().isoformat(),
+                        )
+                    )
+
+            # Check for zero quantity blocks
+            for i, block in enumerate(blocks):
+                quantity = block.get("quantity", 0)
+                if quantity <= 0:
+                    results.append(
+                        BidValidationResult(
+                            generator_name=generator_name,
+                            plant_id=self._get_plant_id(generator_name),
+                            unit_id=self._get_unit_id(generator_name),
+                            validation_type=BidValidationType.ZERO_QUANTITY_BLOCKS,
+                            severity=BidValidationLevel.MEDIUM,
+                            message=f"Zero quantity in bid block {i+1}: {quantity:.2f} MW",
+                            details={
+                                "block_index": i + 1,
+                                "quantity": quantity,
+                                "price": block.get("price", 0),
+                                "fuel_type": self._get_fuel_type(generator_name),
+                            },
+                            recommendations=[
+                                "Remove or fix zero-quantity bid blocks",
+                                "Verify minimum operating parameters",
+                                "Check bid generation algorithm",
                             ],
                             timestamp=datetime.now().isoformat(),
                         )
@@ -648,6 +687,61 @@ class BidValidator:
 
         return results
 
+    def validate_bid_completeness(
+        self, generator_name: str
+    ) -> Optional[BidValidationResult]:
+        """
+        Validate that bid curves are complete and properly structured.
+
+        Args:
+            generator_name: Name of the generator to validate
+
+        Returns:
+            BidValidationResult if incomplete bid curve found, None otherwise
+        """
+        try:
+            # Skip validation if generator missing from supply curves
+            if generator_name not in self.supply_curves:
+                return None
+
+            supply_curve = self.supply_curves[generator_name]
+            offer_curve = supply_curve.get("offer_curve", {})
+            blocks = offer_curve.get("blocks", [])
+
+            # Check if bid curve exists but is very short for a generator with capacity
+            if generator_name in self.resource_db:
+                resource = self.resource_db[generator_name]
+                physical_props = resource.get("physical_properties", {})
+                pmax = physical_props.get("pmax", 0)
+
+                # For generators with significant capacity, expect more than 1-2 bid blocks
+                if pmax > 50 and len(blocks) <= 2:  # 50 MW threshold
+                    return BidValidationResult(
+                        generator_name=generator_name,
+                        plant_id=self._get_plant_id(generator_name),
+                        unit_id=self._get_unit_id(generator_name),
+                        validation_type=BidValidationType.INCOMPLETE_BID_CURVE,
+                        severity=BidValidationLevel.MEDIUM,
+                        message=f"Incomplete bid curve: Only {len(blocks)} blocks for {pmax:.1f} MW generator",
+                        details={
+                            "num_blocks": len(blocks),
+                            "generator_pmax": pmax,
+                            "expected_min_blocks": 3,
+                            "fuel_type": self._get_fuel_type(generator_name),
+                        },
+                        recommendations=[
+                            f"Consider expanding bid curve to better represent {pmax:.1f} MW capacity",
+                            "Add additional bid blocks for operational flexibility",
+                            "Review bid curve generation parameters",
+                        ],
+                        timestamp=datetime.now().isoformat(),
+                    )
+
+        except Exception as e:
+            print(f"Error validating bid completeness for {generator_name}: {e}")
+
+        return None
+
     def validate_single_generator(
         self, generator_name: str
     ) -> List[BidValidationResult]:
@@ -679,6 +773,11 @@ class BidValidator:
         # Bid curve consistency checks
         consistency_results = self.validate_bid_curve_consistency(generator_name)
         results.extend(consistency_results)
+
+        # Bid completeness validation
+        completeness_result = self.validate_bid_completeness(generator_name)
+        if completeness_result:
+            results.append(completeness_result)
 
         # Multi-unit resource logging (informational only - no validation)
         multi_unit_results = self.validate_multi_unit_consistency(generator_name)

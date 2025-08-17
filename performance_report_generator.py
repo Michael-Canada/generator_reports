@@ -872,8 +872,6 @@ To enable anomaly detection:
                         str(unit_id),
                         f"{pmax:.1f}" if isinstance(pmax, (int, float)) else str(pmax),
                         rmse_z_str,
-                        severity,
-                        performance_class_str[:4],
                     ]
                 )
 
@@ -886,8 +884,6 @@ To enable anomaly detection:
                         "Unit ID",
                         "Pmax (MW)",
                         "RMSE Z-Score",
-                        "Severity",
-                        "Class",
                     ],
                     cellLoc="left",
                     loc="center",
@@ -896,16 +892,14 @@ To enable anomaly detection:
                 table.set_fontsize(8)
                 table.scale(1.2, 1.5)
 
-                # Adjust column widths for 7 columns
+                # Adjust column widths for 5 columns
                 cellDict = table.get_celld()
                 for i in range(len(table_data) + 1):
-                    cellDict[(i, 0)].set_width(0.25)  # Generator name
-                    cellDict[(i, 1)].set_width(0.10)  # Plant ID
-                    cellDict[(i, 2)].set_width(0.10)  # Unit ID
-                    cellDict[(i, 3)].set_width(0.12)  # Pmax
-                    cellDict[(i, 4)].set_width(0.13)  # RMSE Z-Score
-                    cellDict[(i, 5)].set_width(0.15)  # Severity
-                    cellDict[(i, 6)].set_width(0.15)  # Class
+                    cellDict[(i, 0)].set_width(0.30)  # Generator name
+                    cellDict[(i, 1)].set_width(0.15)  # Plant ID
+                    cellDict[(i, 2)].set_width(0.15)  # Unit ID
+                    cellDict[(i, 3)].set_width(0.20)  # Pmax
+                    cellDict[(i, 4)].set_width(0.20)  # RMSE Z-Score
 
             else:
                 ax_table.text(
@@ -2358,21 +2352,38 @@ To enable anomaly detection:
         fig = plt.figure(figsize=(11, 8.5))
         fig.suptitle("Bid Validation Analysis", fontsize=16, fontweight="bold")
 
+        # Use a simple 2x1 grid: Description at top, Table at bottom
+        # Row 0: Description text
+        # Row 1: Table
+
         # Description
-        ax_text = plt.subplot2grid((3, 2), (0, 0), colspan=2)
+        ax_text = plt.subplot2grid((2, 1), (0, 0))
         ax_text.axis("off")
 
         description = """
         BID VALIDATION ANALYSIS
         
-        Identifies generators with configuration issues in their bid parameters:
+        Identifies specific generator bid configuration issues by category:
         
-        - PMIN VIOLATIONS: Generator operates below declared Pmin too frequently
-        - PMAX VIOLATIONS: Generator operates above declared Pmax
-        - CAPACITY FACTOR ISSUES: Inconsistent generation patterns vs capacity
-        - MARKET PARTICIPATION: Unusual bid behavior or missing data
+        MAXIMUM CAPACITY ISSUES:
+        • PMAX_BELOW_GENERATION: Declared max capacity lower than actual generation
+        • LAST_BLOCK_INSUFFICIENT: Final bid block too small vs actual output
         
-        These issues suggest potential bid configuration problems requiring operational review.
+        MINIMUM CAPACITY VIOLATIONS:  
+        • FIRST_BLOCK_BELOW_PMIN: Initial bid block below minimum operating capacity
+        • PMIN_PMAX_MISMATCH: Inconsistent min/max capacity parameter declarations
+        
+        BID CURVE STRUCTURE PROBLEMS:
+        • BID_CURVE_INCONSISTENT: Non-monotonic or illogical bid block sequences
+        • UNREALISTIC_PRICE_JUMPS: Extreme price escalations between bid blocks
+        • BID_BLOCKS_NON_MONOTONIC: Decreasing quantities in bid progression
+        
+        MARKET PARTICIPATION GAPS:
+        • MISSING_BID_DATA: No valid bid blocks submitted for active generators
+        • INCOMPLETE_BID_CURVE: Partial or truncated bid curve submissions
+        • ZERO_QUANTITY_BLOCKS: Bid blocks with zero MW quantity values
+        
+        Each issue type indicates specific operational or configuration problems.
         """
 
         ax_text.text(
@@ -2380,7 +2391,7 @@ To enable anomaly detection:
             0.95,
             description,
             transform=ax_text.transAxes,
-            fontsize=11,
+            fontsize=10,
             verticalalignment="top",
             fontfamily="monospace",
         )
@@ -2391,49 +2402,8 @@ To enable anomaly detection:
                 bid_validation_results
             )
 
-            # Issue type distribution
-            ax_issues = plt.subplot2grid((3, 2), (1, 0))
-            issue_type_col = (
-                "validation_type"
-                if "validation_type" in filtered_results.columns
-                else "issue_type"
-            )
-            if issue_type_col in filtered_results.columns:
-                issue_counts = filtered_results[issue_type_col].value_counts()
-                colors = ["red", "orange", "yellow", "lightblue"]
-                ax_issues.pie(
-                    issue_counts.values,
-                    labels=issue_counts.index,
-                    autopct="%1.1f%%",
-                    colors=colors[: len(issue_counts)],
-                )
-                ax_issues.set_title("Bid Validation Issue Types")
-
-            # Severity distribution
-            ax_severity = plt.subplot2grid((3, 2), (1, 1))
-            if "severity" in filtered_results.columns:
-                severity_counts = filtered_results["severity"].value_counts()
-                severity_colors = {
-                    "critical": "red",
-                    "high": "orange",
-                    "medium": "yellow",
-                    "low": "lightblue",
-                }
-                bar_colors = [
-                    severity_colors.get(sev, "gray") for sev in severity_counts.index
-                ]
-                ax_severity.bar(
-                    range(len(severity_counts)),
-                    severity_counts.values,
-                    color=bar_colors,
-                )
-                ax_severity.set_xticks(range(len(severity_counts)))
-                ax_severity.set_xticklabels(severity_counts.index, rotation=45)
-                ax_severity.set_title("Issue Severity Distribution")
-                ax_severity.set_ylabel("Number of Issues")
-
-            # Table of top issues
-            ax_table = plt.subplot2grid((3, 2), (2, 0), colspan=2)
+            # Table of issues - now in row 1 (second row)
+            ax_table = plt.subplot2grid((2, 1), (1, 0))
             ax_table.axis("off")
 
             # Sort by severity and issue type
@@ -2459,7 +2429,7 @@ To enable anomaly detection:
                 sorted_results = filtered_results
 
             table_data = []
-            for idx, row in sorted_results.head(10).iterrows():
+            for idx, row in sorted_results.iterrows():
                 plant_id = row.get("plant_id", "N/A")
                 unit_id = row.get("unit_id", "N/A")
                 fuel_type = row.get("fuel_type", "Unknown")
@@ -2468,6 +2438,20 @@ To enable anomaly detection:
                     if fuel_type and str(fuel_type) != "nan"
                     else "Unknown"
                 )
+
+                # Skip renewable energy generators from bid validation display
+                if fuel_type_safe.upper() in [
+                    "SUN",
+                    "WND",
+                    "WIND",
+                    "WAT",
+                    "WATER",
+                    "SOLAR",
+                    "NUCLEAR",
+                    "NUC",
+                    "HYDRO",
+                ]:
+                    continue
 
                 # Get generator name for Pmax lookup
                 generator_name = row.get("generator_name", row.get("name", "Unknown"))
@@ -2501,7 +2485,6 @@ To enable anomaly detection:
                         row.get("validation_type", row.get("issue_type", "Unknown"))[
                             :15
                         ],
-                        row.get("severity", "Unknown"),
                         (
                             f"{pmax:.1f}"
                             if isinstance(pmax, (int, float)) and pmax > 0
@@ -2519,7 +2502,6 @@ To enable anomaly detection:
                         "Plant ID",
                         "Unit ID",
                         "Issue Type",
-                        "Severity",
                         "Pmax",
                         "Fuel",
                     ],
@@ -2536,13 +2518,12 @@ To enable anomaly detection:
                     cellDict[(i, 0)].set_width(0.25)  # Generator name
                     cellDict[(i, 1)].set_width(0.10)  # Plant ID
                     cellDict[(i, 2)].set_width(0.10)  # Unit ID
-                    cellDict[(i, 3)].set_width(0.20)  # Issue type
-                    cellDict[(i, 4)].set_width(0.15)  # Severity
-                    cellDict[(i, 5)].set_width(0.10)  # Pmax
-                    cellDict[(i, 6)].set_width(0.10)  # Fuel
+                    cellDict[(i, 3)].set_width(0.25)  # Issue type
+                    cellDict[(i, 4)].set_width(0.15)  # Pmax
+                    cellDict[(i, 5)].set_width(0.15)  # Fuel
         else:
             # No bid validation data - check if bid validation was disabled
-            ax_none = plt.subplot2grid((3, 2), (1, 0), colspan=2)
+            ax_none = plt.subplot2grid((2, 1), (1, 0))
             ax_none.axis("off")
 
             # Use the stored bid validation status instead of importing
