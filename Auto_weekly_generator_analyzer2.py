@@ -11,7 +11,7 @@
 # Generators are loaded regardless of this threshold, but only included in PDF if they meet criteria
 #
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = 200  # PDF report threshold - generators included in reports if capacity OR generation >= this value
+MIN_MW_TO_BE_ANALYZED = 1200  # PDF report threshold - generators included in reports if capacity OR generation >= this value
 RUN_BID_VALIDATION = False
 USE_THIS_MARKET = "pjm"  # Options: "miso", "spp", "ercot", "pjm"
 
@@ -1995,6 +1995,7 @@ class GeneratorAnalyzer:
             "unit_id",
             "fuel_type",
             "zone_uid",
+            "quality_tag",
             "RMSE_over_generation",
             "MAE_over_generation",
             "num_hrs_fcst_above_actual_both_non_zero",
@@ -2190,20 +2191,20 @@ class GeneratorAnalyzer:
         if len(merged_df) == 0:
             return None
 
-        # Select and rename columns
-        merged_df = merged_df[
-            [
-                "timestamp",
-                "name_x",
-                "unit_id",
-                "pg",
-                "pmin_x",
-                "pmin_y",
-                "pmax_x",
-                "pmax_y",
-                "generation",
-            ]
+        # Select and rename columns (quality_tag will come from all_generators merge later)
+        base_columns = [
+            "timestamp",
+            "name_x",
+            "unit_id",
+            "pg",
+            "pmin_x",
+            "pmin_y",
+            "pmax_x",
+            "pmax_y",
+            "generation",
         ]
+
+        merged_df = merged_df[base_columns]
 
         merged_df.rename(
             columns={
@@ -2224,22 +2225,53 @@ class GeneratorAnalyzer:
 
         # Merge with generator metadata
         if hasattr(self, "all_generators") and self.all_generators is not None:
-            merged_df = pd.merge(
-                merged_df,
-                self.all_generators[["uid", "label", "fuel_type"]],
+            # Create a copy for merging with base names
+            merge_df = merged_df.copy()
+
+            # Extract base name (part before first space) for matching
+            merge_df["base_name"] = merge_df["name"].str.split().str[0]
+
+            # Try exact match first
+            exact_merged = pd.merge(
+                merge_df,
+                self.all_generators[["uid", "label", "fuel_type", "quality_tag"]],
                 left_on="name",
                 right_on="uid",
                 how="left",
             )
-            merged_df.drop(columns=["uid"], inplace=True)
-        else:
-            # Add default fuel_type if all_generators data not available
-            merged_df["fuel_type"] = "UNKNOWN"
 
-        # Reorganize columns
+            # For rows that didn't match exactly, try base name match
+            unmatched_mask = exact_merged["uid"].isna()
+            if unmatched_mask.any():
+                base_merged = pd.merge(
+                    merge_df[unmatched_mask],
+                    self.all_generators[["uid", "label", "fuel_type", "quality_tag"]],
+                    left_on="base_name",
+                    right_on="uid",
+                    how="left",
+                )
+                # Update the unmatched rows with base name matches
+                for col in ["label", "fuel_type", "quality_tag", "uid"]:
+                    exact_merged.loc[unmatched_mask, col] = base_merged[col].values
+
+            merged_df = exact_merged.drop(columns=["uid", "base_name"])
+
+            # Fill remaining NaN values with defaults
+            merged_df["fuel_type"] = merged_df["fuel_type"].fillna("UNKNOWN")
+            merged_df["quality_tag"] = merged_df["quality_tag"].fillna("N/A")
+            merged_df["label"] = merged_df["label"].fillna("")
+
+        else:
+            # Add default values if all_generators data not available
+            merged_df["fuel_type"] = "UNKNOWN"
+            merged_df["quality_tag"] = "N/A"
+            merged_df["label"] = ""
+
+        # Reorganize columns (quality_tag is now available from all_generators merge)
         column_order = [
             "generator_uid",
             "timestamp",
+            "quality_tag",
             "actual_pg",
             "fcst_pg",
             "zone_uid",
@@ -2251,6 +2283,7 @@ class GeneratorAnalyzer:
             "pmax_Forecast",
             "name",
         ]
+
         merged_df = merged_df[column_order]
 
         return merged_df
@@ -2335,6 +2368,7 @@ class GeneratorAnalyzer:
             "unit_id": merged_df.unit_id.iloc[0],
             "fuel_type": merged_df.fuel_type.iloc[0],
             "zone_uid": merged_df.zone_uid.iloc[0],
+            "quality_tag": merged_df.quality_tag.iloc[0],
             "RMSE_over_generation": rmse,
             "MAE_over_generation": mae,
             "num_hrs_fcst_above_actual_both_non_zero": num_hrs_forecast_above,

@@ -702,80 +702,137 @@ To enable anomaly detection:
             # Normal performance analysis mode - Apply filtering first
             filtered_results = self._filter_generators_for_report(results_df)
 
-            # Calculate Z-scores
+            # Calculate Z-scores (handle small datasets gracefully)
             results_df_copy = filtered_results.copy()
             rmse_mean = results_df_copy["RMSE_over_generation"].mean()
             rmse_std = results_df_copy["RMSE_over_generation"].std()
             mae_mean = results_df_copy["MAE_over_generation"].mean()
             mae_std = results_df_copy["MAE_over_generation"].std()
 
-            results_df_copy["rmse_zscore"] = (
-                results_df_copy["RMSE_over_generation"] - rmse_mean
-            ) / (rmse_std + 1e-8)
-            results_df_copy["mae_zscore"] = (
-                results_df_copy["MAE_over_generation"] - mae_mean
-            ) / (mae_std + 1e-8)
+            # For small datasets or zero std, set Z-scores to 0
+            if len(results_df_copy) < 2 or rmse_std == 0:
+                results_df_copy["rmse_zscore"] = 0.0
+            else:
+                results_df_copy["rmse_zscore"] = (
+                    results_df_copy["RMSE_over_generation"] - rmse_mean
+                ) / rmse_std
 
-            # RMSE Z-score histogram
+            if len(results_df_copy) < 2 or mae_std == 0:
+                results_df_copy["mae_zscore"] = 0.0
+            else:
+                results_df_copy["mae_zscore"] = (
+                    results_df_copy["MAE_over_generation"] - mae_mean
+                ) / mae_std
+
+            # RMSE Z-score histogram (handle small datasets)
             ax_zscore = plt.subplot2grid((3, 2), (1, 0), colspan=2)
-            ax_zscore.hist(
-                results_df_copy["rmse_zscore"],
-                bins=20,
-                alpha=0.7,
-                color="skyblue",
-                edgecolor="black",
-            )
-            ax_zscore.axvline(
-                2.0,
-                color="red",
-                linestyle="--",
-                alpha=0.7,
-                label="Anomaly Threshold (+2)",
-            )
-            ax_zscore.axvline(
-                -2.0,
-                color="red",
-                linestyle="--",
-                alpha=0.7,
-                label="Anomaly Threshold (-2)",
-            )
-            ax_zscore.axvline(
-                3.0,
-                color="darkred",
-                linestyle="-",
-                alpha=0.7,
-                label="Critical Threshold (+3)",
-            )
-            ax_zscore.axvline(
-                -3.0,
-                color="darkred",
-                linestyle="-",
-                alpha=0.7,
-                label="Critical Threshold (-3)",
-            )
-            ax_zscore.set_xlabel("RMSE Z-Score")
-            ax_zscore.set_ylabel("Number of Generators")
-            ax_zscore.set_title("RMSE Z-Score Distribution")
-            ax_zscore.legend()
-            ax_zscore.grid(True, alpha=0.3)
+
+            if len(results_df_copy) < 2:
+                # For very small datasets, show a simple message instead of histogram
+                ax_zscore.text(
+                    0.5,
+                    0.5,
+                    f"Single Generator Analysis\nZ-score analysis requires ≥2 generators\nCurrent dataset: {len(results_df_copy)} generator(s)",
+                    ha="center",
+                    va="center",
+                    transform=ax_zscore.transAxes,
+                    fontsize=12,
+                    bbox=dict(
+                        boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.7
+                    ),
+                )
+                ax_zscore.set_title("RMSE Z-Score Distribution")
+            else:
+                # Normal histogram for larger datasets
+                ax_zscore.hist(
+                    results_df_copy[
+                        "rmse_zscore"
+                    ].dropna(),  # Drop any remaining NaN values
+                    bins=min(
+                        20, len(results_df_copy)
+                    ),  # Adjust bins for small datasets
+                    alpha=0.7,
+                    color="skyblue",
+                    edgecolor="black",
+                )
+                ax_zscore.axvline(
+                    2.0,
+                    color="red",
+                    linestyle="--",
+                    alpha=0.7,
+                    label="Anomaly Threshold (+2)",
+                )
+                ax_zscore.axvline(
+                    -2.0,
+                    color="red",
+                    linestyle="--",
+                    alpha=0.7,
+                    label="Anomaly Threshold (-2)",
+                )
+                ax_zscore.axvline(
+                    3.0,
+                    color="darkred",
+                    linestyle="-",
+                    alpha=0.7,
+                    label="Critical Threshold (+3)",
+                )
+                ax_zscore.axvline(
+                    -3.0,
+                    color="darkred",
+                    linestyle="-",
+                    alpha=0.7,
+                    label="Critical Threshold (-3)",
+                )
+                ax_zscore.set_xlabel("RMSE Z-Score")
+                ax_zscore.set_ylabel("Number of Generators")
+                ax_zscore.set_title("RMSE Z-Score Distribution")
+                ax_zscore.legend()
+                ax_zscore.grid(True, alpha=0.3)
 
             # Table of statistical anomalies
             ax_table = plt.subplot2grid((3, 2), (2, 0), colspan=2)
             ax_table.axis("off")
 
-            # Get generators with high Z-scores
-            anomalous_generators = results_df_copy[
-                (results_df_copy["rmse_zscore"] > 2.0)
-                | (results_df_copy["mae_zscore"] > 2.0)
-            ].sort_values("rmse_zscore", ascending=False)
+            # Get generators with high Z-scores (handle NaN values)
+            if len(results_df_copy) >= 2:
+                # Normal filtering for larger datasets
+                anomalous_generators = results_df_copy[
+                    (
+                        results_df_copy["rmse_zscore"].notna()
+                        & (results_df_copy["rmse_zscore"] > 2.0)
+                    )
+                    | (
+                        results_df_copy["mae_zscore"].notna()
+                        & (results_df_copy["mae_zscore"] > 2.0)
+                    )
+                ].sort_values("rmse_zscore", ascending=False, na_position="last")
+            else:
+                # For small datasets, show all generators as they can't have meaningful Z-scores
+                anomalous_generators = results_df_copy.copy()
 
             table_data = []
             for idx, row in anomalous_generators.head(15).iterrows():
-                severity = (
-                    "Critical"
-                    if row["rmse_zscore"] > 3.0 or row["mae_zscore"] > 3.0
-                    else "High"
-                )
+                # Handle NaN Z-scores in severity determination
+                rmse_z = row["rmse_zscore"]
+                mae_z = row["mae_zscore"]
+
+                if pd.isna(rmse_z) and pd.isna(mae_z):
+                    severity = "N/A (Single Generator)"
+                    rmse_z_str = "N/A"
+                elif (not pd.isna(rmse_z) and rmse_z > 3.0) or (
+                    not pd.isna(mae_z) and mae_z > 3.0
+                ):
+                    severity = "Critical"
+                    rmse_z_str = f"{rmse_z:.2f}" if not pd.isna(rmse_z) else "N/A"
+                elif (not pd.isna(rmse_z) and rmse_z > 2.0) or (
+                    not pd.isna(mae_z) and mae_z > 2.0
+                ):
+                    severity = "High"
+                    rmse_z_str = f"{rmse_z:.2f}" if not pd.isna(rmse_z) else "N/A"
+                else:
+                    severity = "Moderate"
+                    rmse_z_str = f"{rmse_z:.2f}" if not pd.isna(rmse_z) else "N/A"
+
                 plant_id = row.get("plant_id", "N/A")
                 unit_id = row.get("unit_id", "N/A")
 
@@ -812,7 +869,7 @@ To enable anomaly detection:
                         str(plant_id),
                         str(unit_id),
                         f"{pmax:.1f}" if isinstance(pmax, (int, float)) else str(pmax),
-                        f"{row['rmse_zscore']:.2f}",
+                        rmse_z_str,
                         severity,
                         performance_class_str[:4],
                     ]
@@ -1394,6 +1451,7 @@ To enable anomaly detection:
                     pmax = pmax_value
 
                 fuel_type = row.get("fuel_type", "N/A")
+                quality_tag = row.get("quality_tag", "N/A")
                 table_data.append(
                     [
                         (
@@ -1409,6 +1467,7 @@ To enable anomaly detection:
                             else str(pmax)
                         ),  # Pmax
                         str(fuel_type),  # Fuel Type
+                        str(quality_tag),  # Quality Tag
                         f"{row.get('performance_score', row['R_SQUARED']*100):.1f}",
                         f"{row['RMSE_over_generation']:.1f}",
                     ]
@@ -1427,6 +1486,7 @@ To enable anomaly detection:
                         "Unit ID",
                         "Pmax (MW)",
                         "Fuel Type",
+                        "Quality Tag",
                         "Score",
                         "RMSE",
                     ],
@@ -1443,14 +1503,15 @@ To enable anomaly detection:
                 cellDict = table.get_celld()
                 for i in range(len(table_data) + 1):  # +1 for header
                     cellDict[(i, 0)].set_width(
-                        0.30
-                    )  # Generator name (increased from 0.25)
-                    cellDict[(i, 1)].set_width(0.10)  # Plant ID (increased from 0.08)
-                    cellDict[(i, 2)].set_width(0.10)  # Unit ID (increased from 0.08)
-                    cellDict[(i, 3)].set_width(0.15)  # Pmax (increased from 0.12)
-                    cellDict[(i, 4)].set_width(0.20)  # Fuel Type (was Classification)
-                    cellDict[(i, 5)].set_width(0.08)  # Score (decreased from 0.10)
-                    cellDict[(i, 6)].set_width(0.07)  # RMSE (decreased from 0.10)
+                        0.25
+                    )  # Generator name (reduced to fit new column)
+                    cellDict[(i, 1)].set_width(0.08)  # Plant ID (reduced)
+                    cellDict[(i, 2)].set_width(0.08)  # Unit ID (reduced)
+                    cellDict[(i, 3)].set_width(0.12)  # Pmax (reduced)
+                    cellDict[(i, 4)].set_width(0.15)  # Fuel Type (reduced)
+                    cellDict[(i, 5)].set_width(0.12)  # Quality Tag (new)
+                    cellDict[(i, 6)].set_width(0.08)  # Score (reduced)
+                    cellDict[(i, 7)].set_width(0.12)  # RMSE (new position)
             else:
                 # No poor/critical generators found
                 ax_table.text(
