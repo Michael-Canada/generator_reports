@@ -11,9 +11,9 @@
 # Generators are loaded regardless of this threshold, but only included in PDF if they meet criteria
 #
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = 1000  # PDF report threshold - generators included in reports if capacity OR generation >= this value
+MIN_MW_TO_BE_ANALYZED = 800  # PDF report threshold - generators included in reports if capacity OR generation >= this value
 RUN_BID_VALIDATION = True
-USE_THIS_MARKET = "pjm"  # Options: "miso", "spp", "ercot", "pjm"
+USE_THIS_MARKET = "miso"  # Options: "miso", "spp", "ercot", "pjm"
 
 # ===============================================================
 

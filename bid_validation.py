@@ -715,7 +715,7 @@ class BidValidator:
                 pmax = physical_props.get("pmax", 0)
 
                 # For generators with significant capacity, expect more than 1-2 bid blocks
-                if pmax > 50 and len(blocks) <= 2:  # 50 MW threshold
+                if pmax > 50 and len(blocks) == 0:  # 50 MW threshold
                     return BidValidationResult(
                         generator_name=generator_name,
                         plant_id=self._get_plant_id(generator_name),
