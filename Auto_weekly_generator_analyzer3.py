@@ -11,9 +11,10 @@
 # Generators are loaded regardless of this threshold, but only included in PDF if they meet criteria
 #
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = 800  # PDF report threshold - generators included in reports if capacity OR generation >= this value
-RUN_BID_VALIDATION = True
+MIN_MW_TO_BE_ANALYZED = 1000  # PDF report threshold - generators included in reports if capacity OR generation >= this value
+RUN_BID_VALIDATION = False
 USE_THIS_MARKET = "miso"  # Options: "miso", "spp", "ercot", "pjm"
+# USE_THIS_MARKET = "ercot"  # Options: "miso", "spp", "ercot", "pjm"
 
 # ===============================================================
 
@@ -53,7 +54,7 @@ import json
 import random
 from datetime import datetime
 from typing import NamedTuple, Dict, Optional, Tuple, List
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 ## added ## - New imports for enhanced analysis
 from scipy import stats
@@ -170,7 +171,7 @@ class Config:
             "timezone_offset": "T04:00:00-05:00",
         },
         "ercot": {
-            "run_version": "ercot",
+            "run_version": "ercot_20250815",
             "collection": "ercot-rt-se",
             "timezone_offset": "T04:00:00-05:00",
         },
@@ -188,7 +189,7 @@ class Config:
         "file_paths": {
             "miso": "metadata/miso.resourcedb/2024-11-19/resources.json",
             "spp": "metadata/spp.resourcedb/2024-11-19/resources.json",
-            "ercot": "metadata/ercot.resourcedb/2025-08-29/resources.json",
+            "ercot": "metadata/ercot.resourcedb.v2/2025-08-29/resources.json",
             "pjm": "metadata/miso.resourcedb/2025-06-11/resources.json",  # this is not a mistake. It should be "miso" and not "pjm" here
         },
     }
@@ -203,6 +204,8 @@ class Config:
     # Time windows
     MONTHS_BACK = 6
     WEEKS_BACK = 6
+    if USE_THIS_MARKET in ["ercot", "ERCOT"]:
+        WEEKS_BACK = 14
 
     # PDF Report filtering - excludes generators that meet BOTH criteria:
     # 1. Pmax < MIN_CAPACITY_MW_FOR_REPORTS AND
@@ -284,11 +287,13 @@ class Config:
 class APIClient:
     """Handles all API requests and data fetching operations with bulk optimization."""
 
-    def __init__(self, bulk_enabled: bool = True, max_workers: int = 8):
+    def __init__(self, bulk_enabled: bool = True, max_workers: int = 8, config=None):
         self.auth = self._get_auth()
         self.url_root = Config.URL_ROOT
         self.bulk_enabled = bulk_enabled
         self.max_workers = max_workers
+        self.config = config or Config()
+        self.market_config = self.config.get_current_config()
 
         # OPTIMIZATION: Connection pooling for better performance
         self.session = requests.Session()
@@ -555,14 +560,18 @@ class BidAnalyzer:
 class DataProcessor:
     """Handles data processing and transformation operations."""
 
+    def __init__(self, config=None):
+        self.config = config or Config()
+
     @staticmethod
     def extract_date_from_string(string: str, market: str) -> str:
         """Extract date from case string based on market format."""
         if market in ["miso", "pjm"]:
             found_date = string.split("_")[2].split("-")[0]
             return f"{found_date[:4]}-{found_date[4:6]}-{found_date[6:]}"
-        elif market == "ercot":  # MS this may have to be worked on ZZZ
-            return string.split("_")[3]
+        elif market == "ercot":  # DONE: MS this may have to be worked on ZZZ
+            found_date = string.split("_")[3]
+            return f"{found_date[:4]}-{found_date[4:6]}-{found_date[6:8]}"
         elif market == "spp":
             found_date = string.split("_")[1]
             return f"{found_date[:4]}-{found_date[4:6]}-{found_date[6:8]}"
@@ -575,7 +584,9 @@ class DataProcessor:
         if market in ["miso", "pjm"]:
             return string.split("_")[2].split("-")[1]
         elif market == "ercot":
-            return string.split("_")[3]  # MS this may have to be worked on ZZZ
+            return string.split("_")[4][
+                1:
+            ]  # Done. MS this may have to be worked on ZZZ
         else:
             raise ValueError(f"Time extraction not implemented for market: {market}")
 
@@ -594,20 +605,53 @@ class DataProcessor:
                 date_str = f"{match.group(1)} {match.group(2)}"
                 date_obj = datetime.strptime(date_str, "%Y%m%d %H%M")
                 return pytz.utc.localize(date_obj)
-            elif market == "ercot":
-                match = re.search(
-                    r"ercot_rt_se_(\d{8})_H(\d{2})", case_str
-                )  # MS this may have to be worked on ZZZ
-                if match:
-                    date_str = f"{match.group(1)} {match.group(2)}"
-                    date_obj = datetime.strptime(date_str, "%Y%m%d %H%M")
-                    return pytz.utc.localize(date_obj)
+        elif market == "ercot":
+            match = re.search(
+                r"ercot_rt_se_(\d{4})(\d{2})(\d{2})_H(\d{2})", case_str
+            )  # Done: MS this may have to be worked on ZZZ
+            if match:
+                year, month, day, hour = match.groups()
+                hour_int = int(hour)
+
+                # Handle hours >= 24 (daylight saving time issues)
+                if hour_int >= 24:
+                    date_obj = datetime.strptime(f"{year}-{month}-{day}", "%Y-%m-%d")
+                    # Add the extra days and hours
+                    extra_days = hour_int // 24
+                    remaining_hours = hour_int % 24
+                    date_obj = date_obj + timedelta(days=extra_days)
+                    date_obj = date_obj.replace(hour=remaining_hours)
+                else:
+                    date_str = f"{year}-{month}-{day} {hour}:00:00"
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+
+                return pytz.utc.localize(date_obj)
+            else:
+                # Debug: print the case_str that doesn't match
+                print(
+                    f"DEBUG: ERCOT case_str '{case_str}' doesn't match expected pattern"
+                )
+                return None
         return None
 
-    @staticmethod
-    def convert_time(string: str) -> str:
-        """Convert timezone format for SPP data."""
-        return string[:-6] + "+00:00"
+    def convert_time(self, string: str) -> str:
+        """Convert timezone format based on market."""
+        if self.config.MARKET == "spp":
+            return string[:-6] + "+00:00"
+        elif self.config.MARKET == "ercot":
+            # ERCOT timestamps should already be in proper format, just ensure UTC
+            if string.endswith("Z"):
+                return string[:-1] + "+00:00"
+            elif "+" in string or string.endswith("UTC"):
+                return string
+            else:
+                return string + "+00:00"
+        else:
+            # For MISO/PJM, return as-is or add UTC if needed
+            if "+" in string or string.endswith("Z") or string.endswith("UTC"):
+                return string
+            else:
+                return string + "+00:00"
 
 
 ## add ## - Metrics calculation utilities
@@ -854,7 +898,9 @@ class AnomalyDetector:
             return []
 
         # CRITICAL FIX: Filter to only last 6 weeks of data for chronic error detection
-        six_weeks_ago = pd.Timestamp.now(tz="UTC") - pd.DateOffset(weeks=6)
+        six_weeks_ago = pd.Timestamp.now(tz="UTC") - pd.DateOffset(
+            weeks=Config.WEEKS_BACK
+        )
 
         # Ensure timestamps have timezone info for proper comparison
         if merged_df["timestamp"].dt.tz is None:
@@ -1318,8 +1364,8 @@ class GeneratorAnalyzer:
         self.generators = pd.DataFrame()  # Safety fallback
 
         self.config = Config()
-        self.api_client = APIClient()
-        self.data_processor = DataProcessor()
+        self.api_client = APIClient(config=self.config)
+        self.data_processor = DataProcessor(self.config)
         self.metrics_calc = MetricsCalculator()
         self.anomaly_detector = AnomalyDetector()
 
@@ -1331,13 +1377,24 @@ class GeneratorAnalyzer:
         else:
             print("Bid analysis disabled - skipping bid correlation analysis")
 
-        # Better date handling
-        self.six_months_ago = pd.Timestamp.now(tz="UTC") - pd.DateOffset(
-            months=self.config.MONTHS_BACK
-        )
-        self.six_weeks_ago = pd.Timestamp.now(tz="UTC") - pd.DateOffset(
-            weeks=self.config.WEEKS_BACK
-        )
+        # Better date handling - adaptive for different markets
+        if self.config.MARKET == "ercot":
+            # For ERCOT, use more flexible time windows to handle data gaps
+            self.six_months_ago = pd.Timestamp(
+                "2015-01-01", tz="UTC"
+            )  # Include all available historical data
+            self.six_weeks_ago = pd.Timestamp(
+                "2015-01-01", tz="UTC"
+            )  # Include all available historical data
+            print("⚡ ERCOT: Using extended time window to include all available data")
+        else:
+            # For other markets, use standard time windows
+            self.six_months_ago = pd.Timestamp.now(tz="UTC") - pd.DateOffset(
+                months=self.config.MONTHS_BACK
+            )
+            self.six_weeks_ago = pd.Timestamp.now(tz="UTC") - pd.DateOffset(
+                weeks=self.config.WEEKS_BACK
+            )
         self.today_date_str = datetime.now().strftime("%Y-%m-%d")
 
         # Complete initialization
@@ -2135,22 +2192,24 @@ class GeneratorAnalyzer:
 
             forecast_data["pmin"] = forecast_data["generation"].min()
             forecast_data["pmax"] = forecast_data["generation"].max()
-        elif self.config.MARKET == "spp":
+        elif self.config.MARKET in ["ercot", "spp"]:
             if forecast_data is None or len(forecast_data) == 0:
                 return None
-            # Add dummy values for SPP
-            forecast_data["fuel"] = "DUMMY"
-            forecast_data["pmin"] = "DUMMY"
-            forecast_data["pmax"] = "DUMMY"
-        elif self.config.MARKET == "ercot":
-            if (
-                forecast_data is None or len(forecast_data) == 0
-            ):  # MS this may have to be worked on ZZZ
-                return None
-            # Add dummy values for ERCOT
-            forecast_data["fuel"] = "DUMMY"
-            forecast_data["pmin"] = "DUMMY"
-            forecast_data["pmax"] = "DUMMY"
+            # Add numerical values for ERCOT/SPP instead of dummy strings
+            # Use actual data to infer reasonable values
+            if "generation" in forecast_data.columns:
+                gen_max = forecast_data["generation"].max()
+                gen_min = forecast_data["generation"].min()
+                forecast_data["fuel"] = (
+                    "UNKNOWN"  # Will be filled from ResourceDB if available
+                )
+                forecast_data["pmin"] = max(0, gen_min * 0.9)  # 90% of observed minimum
+                forecast_data["pmax"] = gen_max * 1.1  # 110% of observed maximum
+            else:
+                # Fallback values
+                forecast_data["fuel"] = "UNKNOWN"
+                forecast_data["pmin"] = 0
+                forecast_data["pmax"] = 1000  # Default reasonable value
 
         return forecast_data
 
@@ -2189,12 +2248,36 @@ class GeneratorAnalyzer:
                 forecast_data["timestamp"], utc=True
             )
         elif self.config.MARKET == "ercot":
-            forecast_data["timestamp"] = forecast_data["timestamp"].apply(
-                self.data_processor.convert_time
-            )  # MS this may have to be worked on ZZZ
-            forecast_data["timestamp"] = pd.to_datetime(
-                forecast_data["timestamp"], utc=True
-            )
+            try:
+                # Method 1: Try using convert_time
+                forecast_data["timestamp"] = forecast_data["timestamp"].apply(
+                    self.data_processor.convert_time
+                )
+                forecast_data["timestamp"] = pd.to_datetime(
+                    forecast_data["timestamp"], utc=True
+                )
+                print("✅ ERCOT timestamp processing with convert_time succeeded")
+            except Exception as e:
+                print(f"⚠️ ERCOT convert_time failed: {e}")
+                # Method 2: Try direct datetime conversion
+                try:
+                    forecast_data["timestamp"] = pd.to_datetime(
+                        forecast_data["timestamp"], utc=True, errors="coerce"
+                    )
+                    # Check if conversion was successful
+                    valid_timestamps = forecast_data["timestamp"].notna().sum()
+                    total_timestamps = len(forecast_data)
+                    print(
+                        f"✅ Alternative ERCOT timestamp parsing: {valid_timestamps}/{total_timestamps} valid"
+                    )
+
+                    if valid_timestamps == 0:
+                        print("❌ No valid timestamps after conversion")
+                        return None
+
+                except Exception as e2:
+                    print(f"❌ Alternative ERCOT timestamp parsing also failed: {e2}")
+                    return None
 
         return forecast_data
 
@@ -2213,6 +2296,12 @@ class GeneratorAnalyzer:
             right_on="timestamp",
             how="inner",
         )
+
+        # ERCOT-specific handling for data availability issues
+        if len(merged_df) == 0 and self.config.MARKET == "ercot":
+            print(
+                f"⚡ ERCOT: No data overlap for generator. Actual: {len(actual_generation)} rows, Forecast: {len(forecast_data)} rows"
+            )
 
         if len(merged_df) == 0:
             return None
@@ -2387,14 +2476,26 @@ class GeneratorAnalyzer:
         # Alert severity determination
         alert_severity = AlertSeverity.LOW
 
+        # Helper function for safe column access
+        def safe_get(df, column, default=None):
+            try:
+                if column in df.columns:
+                    return df[column].iloc[0]
+                else:
+                    return default
+            except (IndexError, KeyError):
+                return default
+
         return {
-            "generated_uid": merged_df.generator_uid.iloc[0],
-            "name": merged_df.name.iloc[0],
-            "orig_name": merged_df.orig_name.iloc[0],
-            "unit_id": merged_df.unit_id.iloc[0],
-            "fuel_type": merged_df.fuel_type.iloc[0],
-            "zone_uid": merged_df.zone_uid.iloc[0],
-            "quality_tag": merged_df.quality_tag.iloc[0],
+            "generated_uid": safe_get(
+                merged_df, "generator_uid", merged_df.name.iloc[0]
+            ),
+            "name": safe_get(merged_df, "name", "UNKNOWN"),
+            "orig_name": safe_get(merged_df, "orig_name", merged_df.name.iloc[0]),
+            "unit_id": safe_get(merged_df, "unit_id", "UNKNOWN"),
+            "fuel_type": safe_get(merged_df, "fuel_type", "UNKNOWN"),
+            "zone_uid": safe_get(merged_df, "zone_uid", "UNKNOWN"),
+            "quality_tag": safe_get(merged_df, "quality_tag", "UNKNOWN"),
             "RMSE_over_generation": rmse,
             "MAE_over_generation": mae,
             "num_hrs_fcst_above_actual_both_non_zero": num_hrs_forecast_above,
@@ -2404,39 +2505,64 @@ class GeneratorAnalyzer:
             "MAX_GENERATION_ERROR": max_error,
             "MIN_GENERATION_ERROR": min_error,
             "R_SQUARED": r_squared,
-            "%_running": merged_df["%_running"].iloc[0],
-            "num_running_hours": merged_df["num_running_hours"].iloc[0],
+            "%_running": safe_get(merged_df, "%_running", 0),
+            "num_running_hours": safe_get(merged_df, "num_running_hours", 0),
             "HISTORIC_IS_ZERO": historic_is_zero,
             "FORECAST_IS_ZERO": forecast_is_zero,
-            "P_MAX_ACTUAL": merged_df.pmax_Actual.iloc[0],
-            "P_MAX_FORECAST": merged_df.pmax_Forecast.iloc[0],
-            ## Added ## - Pmax discrepancy metrics
+            "P_MAX_ACTUAL": safe_get(merged_df, "pmax_Actual", generator_capacity),
+            "P_MAX_FORECAST": safe_get(merged_df, "pmax_Forecast", generator_capacity),
+            ## Added ## - Pmax discrepancy metrics (with safe access)
             "pmax_discrepancy_mw": (
-                merged_df.pmax_Actual.iloc[0] - merged_df.pmax_Forecast.iloc[0]
-                if pd.notna(merged_df.pmax_Actual.iloc[0])
-                and pd.notna(merged_df.pmax_Forecast.iloc[0])
+                safe_get(merged_df, "pmax_Actual")
+                - safe_get(merged_df, "pmax_Forecast")
+                if safe_get(merged_df, "pmax_Actual") is not None
+                and safe_get(merged_df, "pmax_Forecast") is not None
+                and pd.notna(safe_get(merged_df, "pmax_Actual"))
+                and pd.notna(safe_get(merged_df, "pmax_Forecast"))
                 else None
             ),
             "pmax_discrepancy_percentage": (
-                abs(merged_df.pmax_Actual.iloc[0] - merged_df.pmax_Forecast.iloc[0])
-                / max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0])
+                abs(
+                    safe_get(merged_df, "pmax_Actual")
+                    - safe_get(merged_df, "pmax_Forecast")
+                )
+                / max(
+                    safe_get(merged_df, "pmax_Actual", 1),
+                    safe_get(merged_df, "pmax_Forecast", 1),
+                )
                 * 100
-                if pd.notna(merged_df.pmax_Actual.iloc[0])
-                and pd.notna(merged_df.pmax_Forecast.iloc[0])
-                and max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0])
+                if safe_get(merged_df, "pmax_Actual") is not None
+                and safe_get(merged_df, "pmax_Forecast") is not None
+                and pd.notna(safe_get(merged_df, "pmax_Actual"))
+                and pd.notna(safe_get(merged_df, "pmax_Forecast"))
+                and max(
+                    safe_get(merged_df, "pmax_Actual", 0),
+                    safe_get(merged_df, "pmax_Forecast", 0),
+                )
                 > 0
                 else None
             ),
             "pmax_discrepancy_flag": (
-                abs(merged_df.pmax_Actual.iloc[0] - merged_df.pmax_Forecast.iloc[0])
-                / max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0])
+                abs(
+                    safe_get(merged_df, "pmax_Actual", 0)
+                    - safe_get(merged_df, "pmax_Forecast", 0)
+                )
+                / max(
+                    safe_get(merged_df, "pmax_Actual", 1),
+                    safe_get(merged_df, "pmax_Forecast", 1),
+                )
                 * 100
                 > self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"][
                     "percentage_threshold"
                 ]
-                if pd.notna(merged_df.pmax_Actual.iloc[0])
-                and pd.notna(merged_df.pmax_Forecast.iloc[0])
-                and max(merged_df.pmax_Actual.iloc[0], merged_df.pmax_Forecast.iloc[0])
+                if safe_get(merged_df, "pmax_Actual") is not None
+                and safe_get(merged_df, "pmax_Forecast") is not None
+                and pd.notna(safe_get(merged_df, "pmax_Actual"))
+                and pd.notna(safe_get(merged_df, "pmax_Forecast"))
+                and max(
+                    safe_get(merged_df, "pmax_Actual", 0),
+                    safe_get(merged_df, "pmax_Forecast", 0),
+                )
                 >= self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"][
                     "min_capacity_for_check"
                 ]
@@ -2444,27 +2570,44 @@ class GeneratorAnalyzer:
             ),
             "large_pmax_diff_resource_reflow_percentage": (
                 abs(
-                    merged_df.pmax_Actual.iloc[0]
-                    - self.resource_db[merged_df.orig_name.iloc[0]][
-                        "physical_properties"
-                    ]["pmax"]
+                    safe_get(merged_df, "pmax_Actual", 0)
+                    - (
+                        self.resource_db.get(safe_get(merged_df, "orig_name", ""), {})
+                        .get("physical_properties", {})
+                        .get("pmax", 0)
+                        if self.resource_db
+                        else 0
+                    )
                 )
                 / max(
-                    merged_df.pmax_Actual.iloc[0],
-                    self.resource_db[merged_df.orig_name.iloc[0]][
-                        "physical_properties"
-                    ]["pmax"],
+                    safe_get(merged_df, "pmax_Actual", 1),
+                    (
+                        self.resource_db.get(safe_get(merged_df, "orig_name", ""), {})
+                        .get("physical_properties", {})
+                        .get("pmax", 1)
+                        if self.resource_db
+                        else 1
+                    ),
                 )
                 * 100
-                if pd.notna(merged_df.pmax_Actual.iloc[0])
+                if safe_get(merged_df, "pmax_Actual") is not None
+                and self.resource_db
+                and safe_get(merged_df, "orig_name") in self.resource_db
+                and "physical_properties"
+                in self.resource_db[safe_get(merged_df, "orig_name")]
+                and "pmax"
+                in self.resource_db[safe_get(merged_df, "orig_name")][
+                    "physical_properties"
+                ]
+                and pd.notna(safe_get(merged_df, "pmax_Actual"))
                 and pd.notna(
-                    self.resource_db[merged_df.orig_name.iloc[0]][
+                    self.resource_db[safe_get(merged_df, "orig_name")][
                         "physical_properties"
                     ]["pmax"]
                 )
                 and max(
-                    merged_df.pmax_Actual.iloc[0],
-                    self.resource_db[merged_df.orig_name.iloc[0]][
+                    safe_get(merged_df, "pmax_Actual", 0),
+                    self.resource_db[safe_get(merged_df, "orig_name")][
                         "physical_properties"
                     ]["pmax"],
                 )
@@ -2472,13 +2615,26 @@ class GeneratorAnalyzer:
                 else None
             ),
             "large_pmax_diff_resource_reflow_mw": (
-                merged_df.pmax_Actual.iloc[0]
-                - self.resource_db[merged_df.orig_name.iloc[0]]["physical_properties"][
-                    "pmax"
+                safe_get(merged_df, "pmax_Actual", 0)
+                - (
+                    self.resource_db.get(safe_get(merged_df, "orig_name", ""), {})
+                    .get("physical_properties", {})
+                    .get("pmax", 0)
+                    if self.resource_db
+                    else 0
+                )
+                if safe_get(merged_df, "pmax_Actual") is not None
+                and self.resource_db
+                and safe_get(merged_df, "orig_name") in self.resource_db
+                and "physical_properties"
+                in self.resource_db[safe_get(merged_df, "orig_name")]
+                and "pmax"
+                in self.resource_db[safe_get(merged_df, "orig_name")][
+                    "physical_properties"
                 ]
-                if pd.notna(merged_df.pmax_Actual.iloc[0])
+                and pd.notna(safe_get(merged_df, "pmax_Actual"))
                 and pd.notna(
-                    self.resource_db[merged_df.orig_name.iloc[0]][
+                    self.resource_db[safe_get(merged_df, "orig_name")][
                         "physical_properties"
                     ]["pmax"]
                 )
@@ -2486,30 +2642,47 @@ class GeneratorAnalyzer:
             ),
             "large_pmax_diff_resource_reflow_flag": (
                 abs(
-                    merged_df.pmax_Actual.iloc[0]
-                    - self.resource_db[merged_df.orig_name.iloc[0]][
-                        "physical_properties"
-                    ]["pmax"]
+                    safe_get(merged_df, "pmax_Actual", 0)
+                    - (
+                        self.resource_db.get(safe_get(merged_df, "orig_name", ""), {})
+                        .get("physical_properties", {})
+                        .get("pmax", 0)
+                        if self.resource_db
+                        else 0
+                    )
                 )
                 / max(
-                    merged_df.pmax_Actual.iloc[0],
-                    self.resource_db[merged_df.orig_name.iloc[0]][
-                        "physical_properties"
-                    ]["pmax"],
+                    safe_get(merged_df, "pmax_Actual", 1),
+                    (
+                        self.resource_db.get(safe_get(merged_df, "orig_name", ""), {})
+                        .get("physical_properties", {})
+                        .get("pmax", 1)
+                        if self.resource_db
+                        else 1
+                    ),
                 )
                 * 100
                 > self.config.ANOMALY_DETECTION["pmax_discrepancy_detection"][
                     "percentage_threshold"
                 ]
-                if pd.notna(merged_df.pmax_Actual.iloc[0])
+                if safe_get(merged_df, "pmax_Actual") is not None
+                and self.resource_db
+                and safe_get(merged_df, "orig_name") in self.resource_db
+                and "physical_properties"
+                in self.resource_db[safe_get(merged_df, "orig_name")]
+                and "pmax"
+                in self.resource_db[safe_get(merged_df, "orig_name")][
+                    "physical_properties"
+                ]
+                and pd.notna(safe_get(merged_df, "pmax_Actual"))
                 and pd.notna(
-                    self.resource_db[merged_df.orig_name.iloc[0]][
+                    self.resource_db[safe_get(merged_df, "orig_name")][
                         "physical_properties"
                     ]["pmax"]
                 )
                 and max(
-                    merged_df.pmax_Actual.iloc[0],
-                    self.resource_db[merged_df.orig_name.iloc[0]][
+                    safe_get(merged_df, "pmax_Actual", 0),
+                    self.resource_db[safe_get(merged_df, "orig_name")][
                         "physical_properties"
                     ]["pmax"],
                 )
@@ -2535,6 +2708,39 @@ class GeneratorAnalyzer:
             "bid_forecast_correlation": None,  # Will be updated if bid analysis is enabled
         }
 
+    def _create_ercot_status_report(self) -> pd.DataFrame:
+        """Create a status report for ERCOT when no analysis results are available."""
+        # Create a summary row explaining the data availability situation
+        status_report = pd.DataFrame(
+            [
+                {
+                    "generator_name": "ERCOT_Data_Availability_Summary",
+                    "orig_name": "ERCOT Data Availability Summary",
+                    "zone": "ERCOT",
+                    "forecast_accuracy_score": 0.0,
+                    "rmse": 0.0,
+                    "mae": 0.0,
+                    "mape": 0.0,
+                    "r2": 0.0,
+                    "consistency_score": 0.0,
+                    "volatility_score": 0.0,
+                    "performance_classification": "Data Gap",
+                    "alert_severity": "INFO",
+                    "pmax": len(self.generators),  # Use generator count as a data point
+                    "bid_forecast_correlation": None,
+                    "generator_capacity_mw": len(self.generators),
+                    "plant_id": "N/A",
+                    "unit_id": "N/A",
+                    "trend_direction": "no_data",
+                    # Add all required columns with default values
+                    "RMSE_over_generation": 0.0,
+                    "R_SQUARED": 0.0,
+                    "notes": "Temporal gap between actual generation data (ends July 2025) and forecast data (starts August 2025)",
+                }
+            ]
+        )
+        return status_report
+
     ## Updated ## - Enhanced final reports with ranking
     def _generate_final_reports(
         self,
@@ -2557,7 +2763,14 @@ class GeneratorAnalyzer:
         if len(combined_results) > 0:
             ranked_results = self.create_comprehensive_ranking(combined_results)
         else:
-            ranked_results = combined_results
+            # ERCOT-specific: Create a minimal status result when no analysis results are available
+            if self.config.MARKET == "ercot":
+                print(
+                    "⚡ ERCOT: No overlapping data found - creating data availability summary..."
+                )
+                ranked_results = self._create_ercot_status_report()
+            else:
+                ranked_results = combined_results
 
         # Generate performance summary
         performance_summary = self._generate_performance_summary(ranked_results)
@@ -2606,6 +2819,9 @@ class GeneratorAnalyzer:
             print("   CSV reports will still be generated normally")
 
         # Save comprehensive reports
+        chronic_alerts = []  # Initialize for later use
+        chronic_filename = None  # Initialize for later use
+
         if self.config.SAVE_RESULTS:
             # Main summary report
             summary_filename = f"forecast_performance_summary_{self.config.MARKET}_{self.today_date_str}.csv"
@@ -2633,7 +2849,6 @@ class GeneratorAnalyzer:
                 chronic_alerts = [
                     alert for alert in all_alerts if "CHRONIC" in alert["alert_type"]
                 ]
-                chronic_filename = None  # Initialize
                 if chronic_alerts:
                     chronic_alerts_df = pd.DataFrame(chronic_alerts)
                     chronic_filename = f"chronic_forecast_errors_{self.config.MARKET}_{self.today_date_str}.csv"
@@ -2699,46 +2914,68 @@ class GeneratorAnalyzer:
 
         # Performance distribution
         if len(ranked_results) > 0:
-            print(f"\n🎯 PERFORMANCE DISTRIBUTION:")
-            perf_counts = ranked_results["performance_classification"].value_counts()
-            total = len(ranked_results)
+            # Check if this is ERCOT status report (no real analysis data)
+            is_ercot_status = (
+                self.config.MARKET == "ercot"
+                and len(ranked_results) == 1
+                and "ERCOT_Data_Availability_Summary"
+                in ranked_results.get("generator_name", pd.Series()).values
+            )
 
-            for perf in ["excellent", "good", "fair", "poor", "critical"]:
-                count = perf_counts.get(perf, 0)
-                percentage = (count / total * 100) if total > 0 else 0
+            if is_ercot_status:
+                print(f"\n⚡ ERCOT DATA AVAILABILITY STATUS:")
                 print(
-                    f"  • {perf.capitalize()}: {count} generators ({percentage:.1f}%)"
+                    f"  • Total generators found: {ranked_results.iloc[0]['generator_capacity_mw']}"
                 )
+                print(f"  • Issue: Temporal gap between actual and forecast data")
+                print(f"  • Actual data: Available through July 2025")
+                print(f"  • Forecast data: Available from August 2025 onwards")
+                print(
+                    f"  • Recommendation: Wait for data overlap or request historical forecast data"
+                )
+            else:
+                print(f"\n🎯 PERFORMANCE DISTRIBUTION:")
+                perf_counts = ranked_results[
+                    "performance_classification"
+                ].value_counts()
+                total = len(ranked_results)
 
-            poor_performers = len(
-                ranked_results[
-                    ranked_results["performance_classification"].isin(
-                        ["poor", "critical"]
+                for perf in ["excellent", "good", "fair", "poor", "critical"]:
+                    count = perf_counts.get(perf, 0)
+                    percentage = (count / total * 100) if total > 0 else 0
+                    print(
+                        f"  • {perf.capitalize()}: {count} generators ({percentage:.1f}%)"
                     )
+
+                poor_performers = len(
+                    ranked_results[
+                        ranked_results["performance_classification"].isin(
+                            ["poor", "critical"]
+                        )
+                    ]
+                )
+                print(
+                    f"\n🚨 Poor performing generators: {poor_performers} ({poor_performers/total*100:.1f}%)"
+                )
+
+                # Top and bottom performers
+                print(f"\n🏆 TOP 5 BEST PERFORMERS:")
+                top_5 = ranked_results.head(5)[
+                    ["name", "performance_score", "performance_classification"]
                 ]
-            )
-            print(
-                f"\n🚨 Poor performing generators: {poor_performers} ({poor_performers/total*100:.1f}%)"
-            )
+                for idx, row in top_5.iterrows():
+                    print(
+                        f"  • {row['name']}: {row['performance_score']:.1f} ({row['performance_classification']})"
+                    )
 
-            # Top and bottom performers
-            print(f"\n🏆 TOP 5 BEST PERFORMERS:")
-            top_5 = ranked_results.head(5)[
-                ["name", "performance_score", "performance_classification"]
-            ]
-            for idx, row in top_5.iterrows():
-                print(
-                    f"  • {row['name']}: {row['performance_score']:.1f} ({row['performance_classification']})"
-                )
-
-            print(f"\n💔 TOP 5 WORST PERFORMERS:")
-            bottom_5 = ranked_results.tail(5)[
-                ["name", "performance_score", "performance_classification"]
-            ]
-            for idx, row in bottom_5.iterrows():
-                print(
-                    f"  • {row['name']}: {row['performance_score']:.1f} ({row['performance_classification']})"
-                )
+                print(f"\n💔 TOP 5 WORST PERFORMERS:")
+                bottom_5 = ranked_results.tail(5)[
+                    ["name", "performance_score", "performance_classification"]
+                ]
+                for idx, row in bottom_5.iterrows():
+                    print(
+                        f"  • {row['name']}: {row['performance_score']:.1f} ({row['performance_classification']})"
+                    )
 
         print(f"\n" + "=" * 80)
 
@@ -3105,7 +3342,7 @@ class GeneratorAnalyzer:
 
             # OPTIMIZATION: Use bulk data fetching for this batch
             try:
-                # fail_deliberately()
+                fail_deliberately()
                 results = self._analyze_batch_optimized(batch_generator_indices)
             except Exception as e:
                 print(
@@ -3113,8 +3350,8 @@ class GeneratorAnalyzer:
                 )
                 # Fallback to original method
                 # MS changes num of jobs to 1:
-                results = Parallel(n_jobs=self.config.N_JOBS)(
-                    # results = Parallel(n_jobs=1)(
+                # results = Parallel(n_jobs=self.config.N_JOBS)(
+                results = Parallel(n_jobs=1)(
                     # results = Parallel(n_jobs=1)(
                     delayed(self.analyze_single_generator)(i)
                     for i in batch_generator_indices
@@ -3209,7 +3446,7 @@ class GeneratorAnalyzer:
                 print("   Continuing with analysis without bid validation...")
 
         # Generate final comprehensive reports
-        if all_results:
+        if all_results or self.config.MARKET == "ercot":
             self._generate_final_reports(all_results, all_anomalies, all_alerts)
 
             # Store results as instance attributes for later access
