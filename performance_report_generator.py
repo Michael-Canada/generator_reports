@@ -296,6 +296,9 @@ class PerformanceReportGenerator:
             # Bid Validation Results (always shown, with status)
             self._create_bid_validation_section(pdf, bid_validation_results)
 
+            # Data Source Comparison (ResourceDB vs Supply Curves)
+            self._create_data_source_comparison_section(pdf)
+
             # Operational Characteristics
             self._create_operational_characteristics_section(pdf, results_df)
 
@@ -2551,6 +2554,484 @@ To enable anomaly detection:
         plt.tight_layout()
         pdf.savefig(fig, bbox_inches="tight")
         plt.close(fig)
+
+    def _create_data_source_comparison_section(self, pdf: PdfPages):
+        """Create data source comparison section showing ResourceDB vs Supply Curves analysis."""
+        # Create multiple pages for comprehensive comparison
+
+        # Page 1: Visual Overview
+        self._create_data_comparison_overview(pdf)
+
+        # Page 2: Detailed Tables
+        self._create_data_comparison_tables(pdf)
+
+        print("✅ Data Source Comparison section completed")
+
+    def _create_data_comparison_overview(self, pdf: PdfPages):
+        """Create visual overview of data source comparison."""
+        fig = plt.figure(figsize=(11, 8.5))
+        fig.suptitle(
+            "Data Source Comparison: ResourceDB vs Supply Curves (Overview)",
+            fontsize=16,
+            fontweight="bold",
+        )
+
+        # Check if comparison data is available from the analyzer
+        if not hasattr(self, "data_comparison_results"):
+            # Create a placeholder section indicating no data available
+            ax = plt.subplot(111)
+            ax.text(
+                0.5,
+                0.5,
+                "Data Source Comparison Not Available\n\n"
+                + "This section would show generators that exist only in ResourceDB,\n"
+                + "only in Supply Curves, or in both datasets.\n\n"
+                + "Enable ResourceDB integration to see this analysis.",
+                ha="center",
+                va="center",
+                fontsize=12,
+                style="italic",
+                bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.5),
+            )
+            ax.axis("off")
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+            return
+
+        comparison_data = self.data_comparison_results
+
+        # Create a 2x2 grid layout
+        gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+
+        # Summary statistics bar chart
+        ax_summary = fig.add_subplot(gs[0, 0])
+        categories = [
+            "ResourceDB\nTotal",
+            "Supply Curves\nTotal",
+            "Common",
+            "ResourceDB\nOnly",
+            "Supply Curves\nOnly",
+        ]
+        values = [
+            comparison_data["total_resourcedb"],
+            comparison_data["total_supply_curves"],
+            comparison_data["common_count"],
+            comparison_data["resourcedb_only_count"],
+            comparison_data["supply_curves_only_count"],
+        ]
+
+        bars = ax_summary.bar(
+            categories,
+            values,
+            color=["#2E86AB", "#A23B72", "#F18F01", "#C73E1D", "#FFB400"],
+        )
+        ax_summary.set_title(
+            "Generator Count Comparison", fontweight="bold", fontsize=10
+        )
+        ax_summary.set_ylabel("Number of Generators", fontsize=8)
+        ax_summary.tick_params(axis="x", rotation=45, labelsize=8)
+        ax_summary.tick_params(axis="y", labelsize=8)
+
+        # Add value labels on bars
+        for bar, value in zip(bars, values):
+            height = bar.get_height()
+            ax_summary.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height + max(values) * 0.01,
+                f"{value}",
+                ha="center",
+                va="bottom",
+                fontweight="bold",
+                fontsize=8,
+            )
+
+        # Coverage percentage pie chart
+        ax_pie = fig.add_subplot(gs[0, 1])
+        if (
+            comparison_data["total_resourcedb"] > 0
+            and comparison_data["total_supply_curves"] > 0
+        ):
+            overlap_pct = (
+                comparison_data["common_count"]
+                / min(
+                    comparison_data["total_resourcedb"],
+                    comparison_data["total_supply_curves"],
+                )
+            ) * 100
+
+            pie_data = [
+                comparison_data["common_count"],
+                comparison_data["resourcedb_only_count"],
+                comparison_data["supply_curves_only_count"],
+            ]
+            pie_labels = [
+                f"Common\n({overlap_pct:.1f}%)",
+                f'ResourceDB Only\n({comparison_data["resourcedb_only_count"]})',
+                f'Supply Curves Only\n({comparison_data["supply_curves_only_count"]})',
+            ]
+            colors = ["#F18F01", "#C73E1D", "#FFB400"]
+
+            wedges, texts, autotexts = ax_pie.pie(
+                pie_data,
+                labels=pie_labels,
+                colors=colors,
+                autopct="%1.1f%%",
+                startangle=90,
+                textprops={"fontsize": 8},
+            )
+            ax_pie.set_title("Data Overlap Analysis", fontweight="bold", fontsize=10)
+        else:
+            ax_pie.text(
+                0.5,
+                0.5,
+                "Insufficient data for\noverlap analysis",
+                ha="center",
+                va="center",
+                fontsize=10,
+                style="italic",
+            )
+            ax_pie.set_title("Data Overlap Analysis", fontweight="bold", fontsize=10)
+
+        # ResourceDB-only generators (show top 10)
+        ax_resourcedb = fig.add_subplot(gs[1, 0])
+        resourcedb_only_list = comparison_data["resourcedb_only"][:10]
+        if resourcedb_only_list:
+            y_pos = range(len(resourcedb_only_list))
+            ax_resourcedb.barh(
+                y_pos, [1] * len(resourcedb_only_list), color="#C73E1D", alpha=0.7
+            )
+            ax_resourcedb.set_yticks(y_pos)
+            ax_resourcedb.set_yticklabels(
+                [
+                    name[:15] + "..." if len(name) > 15 else name
+                    for name in resourcedb_only_list
+                ],
+                fontsize=7,
+            )
+            ax_resourcedb.set_xlabel("Presence", fontsize=8)
+            ax_resourcedb.set_title(
+                f'ResourceDB Only (Top 10 of {len(comparison_data["resourcedb_only"])})',
+                fontweight="bold",
+                fontsize=9,
+            )
+            ax_resourcedb.set_xlim(0, 1.2)
+            ax_resourcedb.set_xticks([])
+        else:
+            ax_resourcedb.text(
+                0.5,
+                0.5,
+                "No generators found\nonly in ResourceDB",
+                ha="center",
+                va="center",
+                fontsize=9,
+                style="italic",
+            )
+            ax_resourcedb.set_title(
+                "ResourceDB Only Generators", fontweight="bold", fontsize=9
+            )
+
+        # Supply Curves-only generators (show top 10)
+        ax_supply = fig.add_subplot(gs[1, 1])
+        supply_curves_only_list = comparison_data["supply_curves_only"][:10]
+        if supply_curves_only_list:
+            y_pos = range(len(supply_curves_only_list))
+            ax_supply.barh(
+                y_pos, [1] * len(supply_curves_only_list), color="#FFB400", alpha=0.7
+            )
+            ax_supply.set_yticks(y_pos)
+            ax_supply.set_yticklabels(
+                [
+                    name[:15] + "..." if len(name) > 15 else name
+                    for name in supply_curves_only_list
+                ],
+                fontsize=7,
+            )
+            ax_supply.set_xlabel("Presence", fontsize=8)
+            ax_supply.set_title(
+                f'Supply Curves Only (Top 10 of {len(comparison_data["supply_curves_only"])})',
+                fontweight="bold",
+                fontsize=9,
+            )
+            ax_supply.set_xlim(0, 1.2)
+            ax_supply.set_xticks([])
+        else:
+            ax_supply.text(
+                0.5,
+                0.5,
+                "No generators found\nonly in Supply Curves",
+                ha="center",
+                va="center",
+                fontsize=9,
+                style="italic",
+            )
+            ax_supply.set_title(
+                "Supply Curves Only Generators", fontweight="bold", fontsize=9
+            )
+
+        # Add summary text with retirement information
+        summary_lines = []
+        summary_lines.append(
+            f"Active ResourceDB: {comparison_data['total_resourcedb']} generators"
+        )
+        summary_lines.append(
+            f"Active Supply Curves: {comparison_data['total_supply_curves']} generators"
+        )
+        summary_lines.append(
+            f"Common active: {comparison_data['common_count']} generators"
+        )
+        summary_lines.append(
+            f"ResourceDB only: {comparison_data['resourcedb_only_count']} generators"
+        )
+        summary_lines.append(
+            f"Supply Curves only: {comparison_data['supply_curves_only_count']} generators"
+        )
+
+        # Add retirement info if available
+        total_retired = comparison_data.get(
+            "retired_resourcedb_count", 0
+        ) + comparison_data.get("retired_supply_curves_count", 0)
+        if total_retired > 0:
+            summary_lines.append("")  # Empty line
+            summary_lines.append(
+                f"Note: {total_retired} retired generators excluded from comparison"
+            )
+            if comparison_data.get("retired_resourcedb_count", 0) > 0:
+                summary_lines.append(
+                    f"  • {comparison_data['retired_resourcedb_count']} retired in ResourceDB"
+                )
+            if comparison_data.get("retired_supply_curves_count", 0) > 0:
+                summary_lines.append(
+                    f"  • {comparison_data['retired_supply_curves_count']} retired in Supply Curves"
+                )
+
+        summary_text = "\n".join(summary_lines)
+
+        fig.text(
+            0.02,
+            0.02,
+            summary_text,
+            fontsize=8,
+            verticalalignment="bottom",
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="lightblue", alpha=0.8),
+        )
+
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+    def _create_data_comparison_tables(self, pdf: PdfPages):
+        """Create detailed tables showing generators that exist only in one dataset."""
+        if not hasattr(self, "data_comparison_results"):
+            return
+
+        comparison_data = self.data_comparison_results
+
+        # Page for ResourceDB Only generators (if any exist)
+        if comparison_data["resourcedb_only_count"] > 0:
+            self._create_resourcedb_only_table(pdf, comparison_data)
+
+        # Page for Supply Curves Only generators
+        if comparison_data["supply_curves_only_count"] > 0:
+            self._create_supply_curves_only_table(pdf, comparison_data)
+        else:
+            # Create a page indicating no Supply Curves only generators
+            fig = plt.figure(figsize=(11, 8.5))
+            fig.suptitle(
+                "Generators Only in Supply Curves", fontsize=16, fontweight="bold"
+            )
+            ax = plt.subplot(111)
+            ax.text(
+                0.5,
+                0.5,
+                "No generators found that exist only in Supply Curves",
+                ha="center",
+                va="center",
+                fontsize=14,
+                style="italic",
+            )
+            ax.axis("off")
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+    def _create_resourcedb_only_table(self, pdf: PdfPages, comparison_data):
+        """Create table for generators that exist only in ResourceDB."""
+        fig = plt.figure(figsize=(11, 8.5))
+        fig.suptitle(
+            f"Generators Only in ResourceDB ({comparison_data['resourcedb_only_count']} generators)",
+            fontsize=16,
+            fontweight="bold",
+        )
+
+        resourcedb_only_list = comparison_data["resourcedb_only"]
+
+        # Create table data
+        table_data = []
+        headers = ["#", "Generator UID", "Description"]
+
+        for i, generator_uid in enumerate(
+            resourcedb_only_list[:50], 1
+        ):  # Show up to 50
+            # Try to get additional info from ResourceDB if available
+            description = "Generator exists in ResourceDB but not in Supply Curves"
+            if hasattr(self, "resource_db") and generator_uid in self.resource_db:
+                resource_info = self.resource_db[generator_uid]
+                fuel_type = resource_info.get("fuel_type", "Unknown")
+                pmax = resource_info.get("physical_properties", {}).get(
+                    "pmax", "Unknown"
+                )
+                description = f"Fuel: {fuel_type}, Pmax: {pmax} MW"
+
+            table_data.append(
+                [
+                    str(i),
+                    (
+                        generator_uid[:30] + "..."
+                        if len(generator_uid) > 30
+                        else generator_uid
+                    ),
+                    description[:40] + "..." if len(description) > 40 else description,
+                ]
+            )
+
+        if len(resourcedb_only_list) > 50:
+            table_data.append(
+                ["...", f"... and {len(resourcedb_only_list) - 50} more", "..."]
+            )
+
+        # Create the table
+        ax = plt.subplot(111)
+        ax.axis("off")
+
+        if table_data:
+            table = ax.table(
+                cellText=table_data, colLabels=headers, loc="center", cellLoc="left"
+            )
+            table.auto_set_font_size(False)
+            table.set_fontsize(8)
+            table.scale(1, 2)
+
+            # Style the table
+            for i in range(len(headers)):
+                table[(0, i)].set_facecolor("#4CAF50")
+                table[(0, i)].set_text_props(weight="bold", color="white")
+
+            for i in range(1, len(table_data) + 1):
+                for j in range(len(headers)):
+                    table[(i, j)].set_facecolor("#f0f0f0" if i % 2 == 0 else "white")
+        else:
+            ax.text(
+                0.5,
+                0.5,
+                "No generators found that exist only in ResourceDB",
+                ha="center",
+                va="center",
+                fontsize=14,
+                style="italic",
+            )
+
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+    def _create_supply_curves_only_table(self, pdf: PdfPages, comparison_data):
+        """Create table for generators that exist only in Supply Curves."""
+        supply_curves_only_list = comparison_data["supply_curves_only"]
+
+        # Calculate how many pages we need (50 generators per page)
+        generators_per_page = 50
+        total_pages = (
+            len(supply_curves_only_list) + generators_per_page - 1
+        ) // generators_per_page
+
+        for page_num in range(total_pages):
+            start_idx = page_num * generators_per_page
+            end_idx = min(start_idx + generators_per_page, len(supply_curves_only_list))
+            page_generators = supply_curves_only_list[start_idx:end_idx]
+
+            fig = plt.figure(figsize=(11, 8.5))
+            page_title = f"Generators Only in Supply Curves (Page {page_num + 1} of {total_pages})"
+            subtitle = f"Showing generators {start_idx + 1}-{end_idx} of {len(supply_curves_only_list)} total"
+            fig.suptitle(f"{page_title}\n{subtitle}", fontsize=14, fontweight="bold")
+
+            # Create table data
+            table_data = []
+            headers = ["#", "Generator UID", "Type", "Description"]
+
+            for i, generator_uid in enumerate(page_generators, start_idx + 1):
+                # Try to get additional info from Supply Curves data if available
+                description = "Generator exists in Supply Curves but not in ResourceDB"
+                gen_type = "Unknown"
+
+                # If we have access to supply curves data, get more details
+                if (
+                    hasattr(self, "supply_curves_db")
+                    and generator_uid in self.supply_curves_db
+                ):
+                    supply_info = self.supply_curves_db[generator_uid]
+                    gen_type = supply_info.get("type", "Unknown")
+                    fuel = supply_info.get(
+                        "fuel_type", supply_info.get("fuel", "Unknown")
+                    )
+                    capacity = supply_info.get(
+                        "capacity", supply_info.get("pmax", "Unknown")
+                    )
+                    description = f"Fuel: {fuel}, Capacity: {capacity} MW"
+
+                table_data.append(
+                    [
+                        str(i),
+                        (
+                            generator_uid[:25] + "..."
+                            if len(generator_uid) > 25
+                            else generator_uid
+                        ),
+                        (
+                            gen_type[:15] + "..."
+                            if len(str(gen_type)) > 15
+                            else str(gen_type)
+                        ),
+                        (
+                            description[:35] + "..."
+                            if len(description) > 35
+                            else description
+                        ),
+                    ]
+                )
+
+            # Create the table
+            ax = plt.subplot(111)
+            ax.axis("off")
+
+            if table_data:
+                table = ax.table(
+                    cellText=table_data, colLabels=headers, loc="center", cellLoc="left"
+                )
+                table.auto_set_font_size(False)
+                table.set_fontsize(7)
+                table.scale(1, 1.8)
+
+                # Style the table
+                for i in range(len(headers)):
+                    table[(0, i)].set_facecolor("#FF9800")
+                    table[(0, i)].set_text_props(weight="bold", color="white")
+
+                for i in range(1, len(table_data) + 1):
+                    for j in range(len(headers)):
+                        table[(i, j)].set_facecolor(
+                            "#fff3e0" if i % 2 == 0 else "white"
+                        )
+
+                # Add summary text at the bottom
+                summary_text = f"These {len(page_generators)} active generators exist in Supply Curves but not in ResourceDB.\n"
+                summary_text += "This could indicate newer generators, different data sources, or synchronization gaps.\n"
+                summary_text += (
+                    "Note: Retired generators have been excluded from this comparison."
+                )
+
+                plt.figtext(
+                    0.1, 0.02, summary_text, fontsize=9, style="italic", wrap=True
+                )
+
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
 
     def _create_operational_characteristics_section(
         self, pdf: PdfPages, results_df: pd.DataFrame
