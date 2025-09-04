@@ -11,10 +11,11 @@
 # Generators are loaded regardless of this threshold, but only included in PDF if they meet criteria
 #
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = 1000  # PDF report threshold - generators included in reports if capacity OR generation >= this value
-RUN_BID_VALIDATION = True
-# USE_THIS_MARKET = "miso"  # Options: "miso", "spp", "ercot", "pjm"
-USE_THIS_MARKET = "ercot"  # Options: "miso", "spp", "ercot", "pjm"
+MIN_MW_TO_BE_ANALYZED = 700  # PDF report threshold - generators included in reports if capacity OR generation >= this value
+RUN_BID_VALIDATION = False
+USE_THIS_MARKET = "miso"  # Options: "miso", "spp", "ercot", "pjm"
+# USE_THIS_MARKET = "pjm"  # Options: "miso", "spp", "ercot", "pjm"
+# USE_THIS_MARKET = "ercot"  # Options: "miso", "spp", "ercot", "pjm"
 
 # ===============================================================
 
@@ -199,7 +200,7 @@ class Config:
     SAVE_RESULTS = True
     CHECK_EXISTENCE_OF_GENERATOR_IN_OUR_LIST = True
     BATCH_SIZE = 300  # OPTIMIZED: Increased from 200 (20% fewer batch overhead)
-    N_JOBS = 8  # OPTIMIZED: Increased from 4 (60% more parallel processing)
+    N_JOBS = -1  # 8  # OPTIMIZED: Increased from 4 (60% more parallel processing)
 
     # Time windows
     MONTHS_BACK = 6
@@ -569,7 +570,7 @@ class DataProcessor:
         if market in ["miso", "pjm"]:
             found_date = string.split("_")[2].split("-")[0]
             return f"{found_date[:4]}-{found_date[4:6]}-{found_date[6:]}"
-        elif market == "ercot":  # DONE: MS this may have to be worked on ZZZ
+        elif market == "ercot":
             found_date = string.split("_")[3]
             return f"{found_date[:4]}-{found_date[4:6]}-{found_date[6:8]}"
         elif market == "spp":
@@ -584,9 +585,7 @@ class DataProcessor:
         if market in ["miso", "pjm"]:
             return string.split("_")[2].split("-")[1]
         elif market == "ercot":
-            return string.split("_")[4][
-                1:
-            ]  # Done. MS this may have to be worked on ZZZ
+            return string.split("_")[4][1:]
         else:
             raise ValueError(f"Time extraction not implemented for market: {market}")
 
@@ -606,9 +605,7 @@ class DataProcessor:
                 date_obj = datetime.strptime(date_str, "%Y%m%d %H%M")
                 return pytz.utc.localize(date_obj)
         elif market == "ercot":
-            match = re.search(
-                r"ercot_rt_se_(\d{4})(\d{2})(\d{2})_H(\d{2})", case_str
-            )  # Done: MS this may have to be worked on ZZZ
+            match = re.search(r"ercot_rt_se_(\d{4})(\d{2})(\d{2})_H(\d{2})", case_str)
             if match:
                 year, month, day, hour = match.groups()
                 hour_int = int(hour)
@@ -1421,6 +1418,10 @@ class GeneratorAnalyzer:
                 print("Comparing ResourceDB vs Supply Curves...")
                 self._compare_resourcedb_vs_supply_curves()
 
+                # Add supply curve bid block analysis
+                print("Analyzing supply curve bid blocks...")
+                self._analyze_supply_curve_bid_blocks()
+
             except Exception as e:
                 print(f"Error loading ResourceDB: {e}")
                 import traceback
@@ -1664,6 +1665,301 @@ class GeneratorAnalyzer:
         self.data_comparison_results = comparison_results
 
         return comparison_results
+
+    def _analyze_supply_curve_bid_blocks(self):
+        """Analyze supply curve bid blocks for monotonicity and quantity variation issues."""
+        if not hasattr(self, "supply_curves_db") or not self.supply_curves_db:
+            print("Supply curves data not available - skipping bid block analysis")
+            return {}
+
+        print("\n🔍 Analyzing supply curve bid blocks for issues...")
+
+        issues = []
+        total_generators_checked = 0
+        generators_with_blocks = 0
+
+        for generator_uid, generator_data in self.supply_curves_db.items():
+            total_generators_checked += 1
+
+            # Skip retired generators
+            if self._is_generator_retired(generator_uid):
+                continue
+
+            # Look for bid blocks in the generator data
+            bid_blocks = None
+            if isinstance(generator_data, dict):
+                # Check various possible field names for bid blocks
+                for field_name in [
+                    "blocks",
+                    "bid_blocks",
+                    "supply_blocks",
+                    "offers",
+                    "bids",
+                ]:
+                    if field_name in generator_data and generator_data[field_name]:
+                        bid_blocks = generator_data[field_name]
+                        break
+
+                # Also check nested structures
+                if not bid_blocks:
+                    for nested_field in ["supply_curve", "bid_curve", "offer_curve"]:
+                        if nested_field in generator_data and isinstance(
+                            generator_data[nested_field], dict
+                        ):
+                            nested_data = generator_data[nested_field]
+                            for field_name in [
+                                "blocks",
+                                "bid_blocks",
+                                "supply_blocks",
+                                "offers",
+                                "bids",
+                            ]:
+                                if (
+                                    field_name in nested_data
+                                    and nested_data[field_name]
+                                ):
+                                    bid_blocks = nested_data[field_name]
+                                    break
+                            if bid_blocks:
+                                break
+
+            if (
+                not bid_blocks
+                or not isinstance(bid_blocks, list)
+                or len(bid_blocks) <= 1
+            ):
+                continue
+
+            generators_with_blocks += 1
+
+            # Analyze the bid blocks
+            generator_issues = self._validate_bid_blocks(
+                generator_uid, bid_blocks, generator_data
+            )
+            if generator_issues:
+                issues.extend(generator_issues)
+
+        # Store results for PDF reporting
+        bid_block_analysis = {
+            "total_generators_checked": total_generators_checked,
+            "generators_with_blocks": generators_with_blocks,
+            "total_issues_found": len(issues),
+            "issues": issues,
+            "issue_types": self._categorize_bid_block_issues(issues),
+        }
+
+        print(f"  • Total generators checked: {total_generators_checked}")
+        print(f"  • Generators with bid blocks: {generators_with_blocks}")
+        print(f"  • Issues found: {len(issues)}")
+
+        if len(issues) > 0:
+            issue_types = bid_block_analysis["issue_types"]
+            for issue_type, count in issue_types.items():
+                print(f"    - {issue_type}: {count} generators")
+
+        self.bid_block_analysis_results = bid_block_analysis
+        return bid_block_analysis
+
+    def _validate_bid_blocks(
+        self, generator_uid: str, bid_blocks: list, generator_data: dict
+    ) -> list:
+        """Validate bid blocks for a single generator and return any issues found."""
+        issues = []
+
+        try:
+            # Extract price and quantity data from blocks
+            prices = []
+            quantities = []
+
+            for i, block in enumerate(bid_blocks):
+                if not isinstance(block, dict):
+                    continue
+
+                # Try different field names for price and quantity
+                price = None
+                quantity = None
+
+                # Common price field names
+                for price_field in [
+                    "price",
+                    "bid_price",
+                    "offer_price",
+                    "cost",
+                    "rate",
+                ]:
+                    if price_field in block and block[price_field] is not None:
+                        try:
+                            price = float(block[price_field])
+                            break
+                        except (ValueError, TypeError):
+                            continue
+
+                # Common quantity field names
+                for qty_field in ["quantity", "mw", "capacity", "amount", "volume"]:
+                    if qty_field in block and block[qty_field] is not None:
+                        try:
+                            quantity = float(block[qty_field])
+                            break
+                        except (ValueError, TypeError):
+                            continue
+
+                if price is not None and quantity is not None:
+                    prices.append(price)
+                    quantities.append(quantity)
+
+            if len(prices) <= 1 or len(quantities) <= 1:
+                return issues  # Need at least 2 blocks to check monotonicity
+
+            # Check for quantity monotonicity issues
+            quantity_issues = self._check_quantity_monotonicity(
+                generator_uid, quantities, generator_data
+            )
+            if quantity_issues:
+                issues.extend(quantity_issues)
+
+            # Check for small quantity changes (less than 1%)
+            small_change_issues = self._check_small_quantity_changes(
+                generator_uid, quantities, generator_data
+            )
+            if small_change_issues:
+                issues.extend(small_change_issues)
+
+        except Exception as e:
+            # Log error but don't fail the entire analysis
+            print(f"Warning: Error analyzing bid blocks for {generator_uid}: {e}")
+
+        return issues
+
+    def _check_quantity_monotonicity(
+        self, generator_uid: str, quantities: list, generator_data: dict
+    ) -> list:
+        """Check if quantities are monotonically increasing."""
+        issues = []
+
+        non_monotonic_indices = []
+        for i in range(1, len(quantities)):
+            if quantities[i] <= quantities[i - 1]:
+                non_monotonic_indices.append(i)
+
+        if non_monotonic_indices:
+            # Get generator info for better reporting
+            gen_info = self._get_generator_display_info(generator_uid, generator_data)
+
+            issue = {
+                "generator_uid": generator_uid,
+                "generator_name": gen_info["name"],
+                "fuel_type": gen_info["fuel_type"],
+                "capacity": gen_info["capacity"],
+                "issue_type": "non_monotonic_quantity",
+                "severity": "medium",
+                "description": f"Quantity blocks are not monotonically increasing",
+                "details": {
+                    "total_blocks": len(quantities),
+                    "non_monotonic_blocks": len(non_monotonic_indices),
+                    "problem_indices": non_monotonic_indices,
+                    "quantities": quantities,
+                },
+                "recommendation": "Review bid block structure - quantities should increase monotonically",
+            }
+            issues.append(issue)
+
+        return issues
+
+    def _check_small_quantity_changes(
+        self, generator_uid: str, quantities: list, generator_data: dict
+    ) -> list:
+        """Check for quantity changes less than 1% between consecutive blocks."""
+        issues = []
+
+        small_change_indices = []
+        small_changes = []
+
+        for i in range(1, len(quantities)):
+            if quantities[i - 1] > 0:  # Avoid division by zero
+                change_pct = (
+                    abs((quantities[i] - quantities[i - 1]) / quantities[i - 1]) * 100
+                )
+                if 0 < change_pct < 1.0:  # Between 0% and 1%
+                    small_change_indices.append(i)
+                    small_changes.append(change_pct)
+
+        if small_change_indices:
+            # Get generator info for better reporting
+            gen_info = self._get_generator_display_info(generator_uid, generator_data)
+
+            avg_small_change = sum(small_changes) / len(small_changes)
+            severity = "low" if avg_small_change > 0.5 else "medium"
+
+            issue = {
+                "generator_uid": generator_uid,
+                "generator_name": gen_info["name"],
+                "fuel_type": gen_info["fuel_type"],
+                "capacity": gen_info["capacity"],
+                "issue_type": "small_quantity_changes",
+                "severity": severity,
+                "description": f"Small quantity changes (<1%) between consecutive blocks",
+                "details": {
+                    "total_blocks": len(quantities),
+                    "small_change_blocks": len(small_change_indices),
+                    "problem_indices": small_change_indices,
+                    "change_percentages": small_changes,
+                    "avg_change_pct": avg_small_change,
+                    "quantities": quantities,
+                },
+                "recommendation": "Consider consolidating blocks with minimal quantity differences",
+            }
+            issues.append(issue)
+
+        return issues
+
+    def _get_generator_display_info(
+        self, generator_uid: str, generator_data: dict
+    ) -> dict:
+        """Extract display information for a generator."""
+        info = {"name": generator_uid, "fuel_type": "Unknown", "capacity": "Unknown"}
+
+        if isinstance(generator_data, dict):
+            # Try to get a better display name
+            for name_field in ["name", "generator_name", "unit_name", "display_name"]:
+                if name_field in generator_data:
+                    info["name"] = generator_data[name_field]
+                    break
+
+            # Try to get fuel type
+            for fuel_field in ["fuel_type", "fuel", "type", "technology"]:
+                if fuel_field in generator_data:
+                    info["fuel_type"] = generator_data[fuel_field]
+                    break
+
+            # Try to get capacity
+            for capacity_field in [
+                "capacity",
+                "pmax",
+                "max_capacity",
+                "nameplate_capacity",
+            ]:
+                if capacity_field in generator_data:
+                    try:
+                        info["capacity"] = (
+                            f"{float(generator_data[capacity_field]):.1f} MW"
+                        )
+                    except (ValueError, TypeError):
+                        pass
+                    break
+
+        return info
+
+    def _categorize_bid_block_issues(self, issues: list) -> dict:
+        """Categorize bid block issues by type."""
+        categories = {}
+
+        for issue in issues:
+            issue_type = issue["issue_type"]
+            if issue_type not in categories:
+                categories[issue_type] = 0
+            categories[issue_type] += 1
+
+        return categories
 
     ## Added ## - Enhanced generator identification
     def _get_generator_identifiers(self, orig_name: str, main_name: str) -> dict:
@@ -1952,8 +2248,10 @@ class GeneratorAnalyzer:
         # Load generators data
         self.generators = self._load_generators()
 
-        # # MS adds this for debug
-        # self.generators = self.generators[self.generators.name.str.contains("JORDAN")]
+        # # # MS adds this for debug
+        # self.generators = self.generators[
+        #     self.generators.name.str.contains("CBY_CBY_G2")
+        # ]
 
         # Load supporting data
         if self.config.GO_TO_GCLOUD:
@@ -1961,9 +2259,9 @@ class GeneratorAnalyzer:
                 f"/{self.config.MARKET}/cluster_generations.csv"
             )
 
-            # # MS adds this for debug
+            # # # MS adds this for debug
             # self.all_generators = self.all_generators[
-            #     self.all_generators.uid.str.contains("JORDAN")
+            #     self.all_generators.uid.str.contains("CBY_CBY_G2")
             # ]
 
             # MS closes these lines:forecast_info["pmax"]
@@ -2372,13 +2670,13 @@ class GeneratorAnalyzer:
                 forecast_data["fuel"] = (
                     "UNKNOWN"  # Will be filled from ResourceDB if available
                 )
-                forecast_data["pmin"] = max(0, gen_min * 0.9)  # 90% of observed minimum
-                forecast_data["pmax"] = gen_max * 1.1  # 110% of observed maximum
+                forecast_data["pmin"] = max(0, gen_min)
+                forecast_data["pmax"] = gen_max
             else:
                 # Fallback values
                 forecast_data["fuel"] = "UNKNOWN"
                 forecast_data["pmin"] = 0
-                forecast_data["pmax"] = 1000  # Default reasonable value
+                forecast_data["pmax"] = 1234.56  # Default made-up value
 
         return forecast_data
 
@@ -2616,18 +2914,18 @@ class GeneratorAnalyzer:
         generator_capacity = None
         try:
             # Try to get capacity from pmax_Actual or pmax_Forecast
-            capacity_actual = merged_df["pmax_Actual"].iloc[0]
-            capacity_forecast = merged_df["pmax_Forecast"].iloc[0]
+            capacity_actual = merged_df["pmax_Actual"].max()  # zzz
+            capacity_forecast = merged_df["pmax_Forecast"].max()
 
             if pd.notna(capacity_actual) and capacity_actual > 0:
                 generator_capacity = float(capacity_actual)
             elif pd.notna(capacity_forecast) and capacity_forecast > 0:
                 generator_capacity = float(capacity_forecast)
             else:
-                # Fall back to max observed generation + 20% buffer
+                # Fall back to max observed generation
                 max_actual = np.max(actual_pg)
                 max_forecast = np.max(forecast_pg)
-                generator_capacity = max(max_actual, max_forecast) * 1.2
+                generator_capacity = max(max_actual, max_forecast)
         except:
             generator_capacity = None
 
@@ -2678,8 +2976,10 @@ class GeneratorAnalyzer:
             "num_running_hours": safe_get(merged_df, "num_running_hours", 0),
             "HISTORIC_IS_ZERO": historic_is_zero,
             "FORECAST_IS_ZERO": forecast_is_zero,
-            "P_MAX_ACTUAL": safe_get(merged_df, "pmax_Actual", generator_capacity),
-            "P_MAX_FORECAST": safe_get(merged_df, "pmax_Forecast", generator_capacity),
+            # "P_MAX_ACTUAL": safe_get(merged_df, "pmax_Actual", generator_capacity),
+            # "P_MAX_FORECAST": safe_get(merged_df, "pmax_Forecast", generator_capacity),
+            "P_MAX_ACTUAL": merged_df["pmax_Actual"].max(),
+            "P_MAX_FORECAST": merged_df["pmax_Forecast"].max(),
             ## Added ## - Pmax discrepancy metrics (with safe access)
             "pmax_discrepancy_mw": (
                 safe_get(merged_df, "pmax_Actual")
@@ -2978,6 +3278,9 @@ class GeneratorAnalyzer:
                 resource_db=self.resource_db,  # Pass resource_db for Pmax lookup
                 bid_validation_enabled=self.config.BID_VALIDATION.get(
                     "enable_bid_validation", False
+                ),
+                bid_block_analysis_results=getattr(
+                    self, "bid_block_analysis_results", None
                 ),
             )
             print(f"📄 PDF Report generated: {pdf_filename}")
@@ -3515,7 +3818,7 @@ class GeneratorAnalyzer:
 
             # OPTIMIZATION: Use bulk data fetching for this batch
             try:
-                fail_deliberately()
+                # fail_deliberately()
                 results = self._analyze_batch_optimized(batch_generator_indices)
             except Exception as e:
                 print(
@@ -3525,7 +3828,6 @@ class GeneratorAnalyzer:
                 # MS changes num of jobs to 1:
                 # results = Parallel(n_jobs=self.config.N_JOBS)(
                 results = Parallel(n_jobs=1)(
-                    # results = Parallel(n_jobs=1)(
                     delayed(self.analyze_single_generator)(i)
                     for i in batch_generator_indices
                 )

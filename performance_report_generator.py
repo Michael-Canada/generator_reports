@@ -243,11 +243,15 @@ class PerformanceReportGenerator:
         output_filename: str = None,
         resource_db: dict = None,
         bid_validation_enabled: bool = False,
+        bid_block_analysis_results: dict = None,
     ) -> str:
         """Generate a comprehensive PDF report with all performance measures."""
 
         # Store resource_db for use in sections that need Pmax data
         self.resource_db = resource_db or {}
+
+        # Store bid block analysis results for use in PDF sections
+        self.bid_block_analysis_results = bid_block_analysis_results
         # Store dataframes for alternative Pmax lookup
         self.results_df = results_df
         self.anomalies_df = anomalies_df if anomalies_df is not None else pd.DataFrame()
@@ -298,6 +302,9 @@ class PerformanceReportGenerator:
 
             # Data Source Comparison (ResourceDB vs Supply Curves)
             self._create_data_source_comparison_section(pdf)
+
+            # Supply Curve Bid Block Analysis
+            self._create_bid_block_analysis_section(pdf)
 
             # Operational Characteristics
             self._create_operational_characteristics_section(pdf, results_df)
@@ -3028,6 +3035,648 @@ To enable anomaly detection:
 
                 plt.figtext(
                     0.1, 0.02, summary_text, fontsize=9, style="italic", wrap=True
+                )
+
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+    def _create_bid_block_analysis_section(self, pdf: PdfPages):
+        """Create analysis section for supply curve bid block issues."""
+        print("📊 Creating Supply Curve Bid Block Analysis section...")
+
+        if not hasattr(self, "bid_block_analysis_results"):
+            # Create a placeholder section indicating no data available
+            fig = plt.figure(figsize=(11, 8.5))
+            fig.suptitle(
+                "Supply Curve Bid Block Analysis",
+                fontsize=16,
+                fontweight="bold",
+            )
+
+            ax = plt.subplot(111)
+            ax.text(
+                0.5,
+                0.5,
+                "Bid Block Analysis Not Available\n\n"
+                + "This section would show generators with bid block issues:\n"
+                + "• Non-monotonic quantity increases\n"
+                + "• Small quantity changes (<1%) between blocks\n\n"
+                + "Enable ResourceDB integration to see this analysis.",
+                ha="center",
+                va="center",
+                fontsize=12,
+                style="italic",
+                bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.5),
+            )
+            ax.axis("off")
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+            return
+
+        analysis_data = self.bid_block_analysis_results
+
+        # Create overview page
+        self._create_bid_block_overview(pdf, analysis_data)
+
+        # Create detailed tables for issues
+        if analysis_data["total_issues_found"] > 0:
+            self._create_bid_block_issues_tables(pdf, analysis_data)
+
+        print("✅ Supply Curve Bid Block Analysis section completed")
+
+    def _create_bid_block_overview(self, pdf: PdfPages, analysis_data):
+        """Create overview page for bid block analysis."""
+        fig = plt.figure(figsize=(11, 8.5))
+        fig.suptitle(
+            "Supply Curve Bid Block Analysis - Overview",
+            fontsize=16,
+            fontweight="bold",
+        )
+
+        if analysis_data["total_issues_found"] == 0:
+            # No issues found - create summary page
+            ax = plt.subplot(111)
+
+            summary_text = f"""Supply Curve Bid Block Analysis Summary:
+
+✅ No bid block issues detected!
+
+Analysis Results:
+• Total generators checked: {analysis_data['total_generators_checked']}
+• Generators with bid blocks: {analysis_data['generators_with_blocks']}
+• Issues found: {analysis_data['total_issues_found']}
+
+All generators with bid blocks have:
+• Monotonically increasing quantities
+• Quantity changes ≥ 1% between consecutive blocks
+
+This indicates well-structured supply curve bid blocks."""
+
+            ax.text(
+                0.1,
+                0.5,
+                summary_text,
+                transform=ax.transAxes,
+                fontsize=12,
+                verticalalignment="center",
+                bbox=dict(boxstyle="round,pad=1", facecolor="lightgreen", alpha=0.8),
+            )
+            ax.axis("off")
+
+        else:
+            # Issues found - create detailed overview
+            gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+
+            # Summary statistics
+            ax_summary = fig.add_subplot(gs[0, 0])
+            summary_stats = [
+                f"Total Generators: {analysis_data['total_generators_checked']}",
+                f"With Bid Blocks: {analysis_data['generators_with_blocks']}",
+                f"Issues Found: {analysis_data['total_issues_found']}",
+                f"Generators Affected: {len(set(issue['generator_uid'] for issue in analysis_data['issues']))}",
+            ]
+
+            y_pos = range(len(summary_stats))
+            ax_summary.barh(
+                y_pos, [1] * len(summary_stats), color="lightblue", alpha=0.7
+            )
+            ax_summary.set_yticks(y_pos)
+            ax_summary.set_yticklabels(summary_stats, fontsize=10)
+            ax_summary.set_xlim(0, 1.2)
+            ax_summary.set_xticks([])
+            ax_summary.set_title("Analysis Summary", fontweight="bold", fontsize=12)
+
+            # Issue types breakdown
+            ax_types = fig.add_subplot(gs[0, 1])
+            issue_types = analysis_data["issue_types"]
+
+            if issue_types:
+                types = list(issue_types.keys())
+                counts = list(issue_types.values())
+
+                colors = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4"]
+                bars = ax_types.bar(
+                    range(len(types)), counts, color=colors[: len(types)]
+                )
+                ax_types.set_xticks(range(len(types)))
+                ax_types.set_xticklabels(
+                    [t.replace("_", " ").title() for t in types],
+                    rotation=45,
+                    fontsize=9,
+                )
+                ax_types.set_ylabel("Number of Generators")
+                ax_types.set_title("Issue Types", fontweight="bold", fontsize=12)
+
+                # Add value labels on bars
+                for bar, count in zip(bars, counts):
+                    height = bar.get_height()
+                    ax_types.text(
+                        bar.get_x() + bar.get_width() / 2.0,
+                        height + 0.05,
+                        f"{count}",
+                        ha="center",
+                        va="bottom",
+                        fontweight="bold",
+                    )
+
+            # Severity distribution
+            ax_severity = fig.add_subplot(gs[1, 0])
+            severity_counts = {}
+            for issue in analysis_data["issues"]:
+                severity = issue["severity"]
+                severity_counts[severity] = severity_counts.get(severity, 0) + 1
+
+            if severity_counts:
+                severities = list(severity_counts.keys())
+                counts = list(severity_counts.values())
+                colors = {
+                    "low": "#96CEB4",
+                    "medium": "#FFEAA7",
+                    "high": "#FF6B6B",
+                    "critical": "#A29BFE",
+                }
+                pie_colors = [colors.get(s, "#DDD") for s in severities]
+
+                ax_severity.pie(
+                    counts,
+                    labels=severities,
+                    colors=pie_colors,
+                    autopct="%1.1f%%",
+                    startangle=90,
+                )
+                ax_severity.set_title(
+                    "Severity Distribution", fontweight="bold", fontsize=12
+                )
+
+            # Top issues summary
+            ax_details = fig.add_subplot(gs[1, 1])
+            top_issues = sorted(
+                analysis_data["issues"],
+                key=lambda x: (x["severity"] == "high", x["severity"] == "medium"),
+                reverse=True,
+            )[:5]
+
+            if top_issues:
+                details_text = "Top Issues:\n\n"
+                for i, issue in enumerate(top_issues):
+                    details_text += f"{i+1}. {issue['generator_name'][:20]}...\n"
+                    details_text += (
+                        f"   {issue['issue_type'].replace('_', ' ').title()}\n"
+                    )
+                    details_text += f"   Severity: {issue['severity'].title()}\n\n"
+
+                ax_details.text(
+                    0.05,
+                    0.95,
+                    details_text,
+                    transform=ax_details.transAxes,
+                    fontsize=9,
+                    verticalalignment="top",
+                    fontfamily="monospace",
+                    bbox=dict(
+                        boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8
+                    ),
+                )
+
+            ax_details.set_title(
+                "Issue Details Preview", fontweight="bold", fontsize=12
+            )
+            ax_details.axis("off")
+
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+    def _create_bid_block_issues_tables(self, pdf: PdfPages, analysis_data):
+        """Create detailed tables showing bid block issues."""
+        issues = analysis_data["issues"]
+
+        # Group issues by type for better organization
+        issues_by_type = {}
+        for issue in issues:
+            issue_type = issue["issue_type"]
+            if issue_type not in issues_by_type:
+                issues_by_type[issue_type] = []
+            issues_by_type[issue_type].append(issue)
+
+        # Create pages for each issue type
+        for issue_type, type_issues in issues_by_type.items():
+            self._create_bid_block_table_page(pdf, issue_type, type_issues)
+
+    def _create_bid_block_table_page(self, pdf: PdfPages, issue_type, issues):
+        """Create a table page for a specific issue type."""
+        fig = plt.figure(figsize=(11, 8.5))
+
+        # Format the title
+        title_text = issue_type.replace("_", " ").title()
+        fig.suptitle(f"Bid Block Issues: {title_text}", fontsize=16, fontweight="bold")
+
+        # Prepare table data
+        table_data = []
+        headers = ["#", "Generator", "Fuel", "Severity", "Blocks", "Details"]
+
+        for i, issue in enumerate(issues[:25], 1):  # Show up to 25 per page
+            generator_name = issue["generator_name"]
+            if len(generator_name) > 20:
+                generator_name = generator_name[:17] + "..."
+
+            fuel_type = issue.get("fuel_type", "Unknown")
+            if len(fuel_type) > 8:
+                fuel_type = fuel_type[:5] + "..."
+
+            severity = issue["severity"].title()
+
+            # Get block count and details
+            blocks_count = "N/A"
+            details = "Issue detected"
+
+            if "details" in issue:
+                details_obj = issue["details"]
+                if "total_blocks" in details_obj:
+                    blocks_count = str(details_obj["total_blocks"])
+
+                if issue_type == "non_monotonic_quantity":
+                    if "problematic_transitions" in details_obj:
+                        prob_count = len(details_obj["problematic_transitions"])
+                        details = f"{prob_count} bad transitions"
+                elif issue_type == "small_quantity_changes":
+                    if "small_changes_count" in details_obj:
+                        small_count = details_obj["small_changes_count"]
+                        details = f"{small_count} small changes"
+
+            table_data.append(
+                [str(i), generator_name, fuel_type, severity, blocks_count, details]
+            )
+
+        # Create the table
+        ax = plt.subplot(111)
+        ax.axis("off")
+
+        if table_data:
+            table = ax.table(
+                cellText=table_data, colLabels=headers, loc="center", cellLoc="left"
+            )
+            table.auto_set_font_size(False)
+            table.set_fontsize(8)
+            table.scale(1, 1.8)
+
+            # Style the table
+            for i in range(len(headers)):
+                table[(0, i)].set_facecolor("#FF9800")
+                table[(0, i)].set_text_props(weight="bold", color="white")
+
+            for i in range(1, len(table_data) + 1):
+                for j in range(len(headers)):
+                    # Color code by severity
+                    severity = table_data[i - 1][3].lower()
+                    if severity == "high":
+                        bg_color = "#ffebee"
+                    elif severity == "medium":
+                        bg_color = "#fff3e0"
+                    else:
+                        bg_color = "#f0f0f0" if i % 2 == 0 else "white"
+
+                    table[(i, j)].set_facecolor(bg_color)
+
+            # Add summary text at the bottom
+            summary_text = (
+                f"Showing {len(table_data)} generators with {title_text.lower()}.\n"
+            )
+            summary_text += (
+                f"These issues indicate potential problems with bid block structure."
+            )
+
+            plt.figtext(0.1, 0.02, summary_text, fontsize=9, style="italic", wrap=True)
+        else:
+            ax.text(
+                0.5,
+                0.5,
+                f"No {title_text.lower()} found",
+                ha="center",
+                va="center",
+                fontsize=14,
+                style="italic",
+            )
+
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        print("✅ Supply Curve Bid Block Analysis section completed")
+
+    def _create_bid_block_overview(self, pdf: PdfPages, analysis_data: dict):
+        """Create overview page for bid block analysis."""
+        fig = plt.figure(figsize=(11, 8.5))
+        fig.suptitle(
+            "Supply Curve Bid Block Analysis - Overview",
+            fontsize=16,
+            fontweight="bold",
+        )
+
+        # Create a 2x2 grid layout
+        gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+
+        # Summary statistics
+        ax_summary = fig.add_subplot(gs[0, 0])
+
+        categories = ["Total\nGenerators", "With Bid\nBlocks", "Issues\nFound"]
+        values = [
+            analysis_data["total_generators_checked"],
+            analysis_data["generators_with_blocks"],
+            analysis_data["total_issues_found"],
+        ]
+
+        colors = ["#2E86AB", "#A23B72", "#C73E1D"]
+        bars = ax_summary.bar(categories, values, color=colors)
+        ax_summary.set_title("Analysis Summary", fontweight="bold", fontsize=10)
+        ax_summary.set_ylabel("Count", fontsize=8)
+        ax_summary.tick_params(axis="x", labelsize=8)
+        ax_summary.tick_params(axis="y", labelsize=8)
+
+        # Add value labels on bars
+        for bar, value in zip(bars, values):
+            height = bar.get_height()
+            ax_summary.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height + max(values) * 0.01,
+                f"{value}",
+                ha="center",
+                va="bottom",
+                fontweight="bold",
+                fontsize=8,
+            )
+
+        # Issue types pie chart
+        ax_pie = fig.add_subplot(gs[0, 1])
+        if analysis_data["total_issues_found"] > 0:
+            issue_types = analysis_data["issue_types"]
+            labels = []
+            sizes = []
+
+            for issue_type, count in issue_types.items():
+                if issue_type == "non_monotonic_quantity":
+                    labels.append("Non-monotonic\nQuantity")
+                elif issue_type == "small_quantity_changes":
+                    labels.append("Small Quantity\nChanges (<1%)")
+                else:
+                    labels.append(issue_type.replace("_", " ").title())
+                sizes.append(count)
+
+            colors = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7"][
+                : len(labels)
+            ]
+            ax_pie.pie(
+                sizes, labels=labels, autopct="%1.0f%%", colors=colors, startangle=90
+            )
+            ax_pie.set_title("Issue Types Distribution", fontweight="bold", fontsize=10)
+        else:
+            ax_pie.text(
+                0.5,
+                0.5,
+                "No Issues Found",
+                ha="center",
+                va="center",
+                fontsize=12,
+                fontweight="bold",
+                color="green",
+            )
+            ax_pie.set_title("Issue Types Distribution", fontweight="bold", fontsize=10)
+            ax_pie.axis("off")
+
+        # Coverage statistics
+        ax_coverage = fig.add_subplot(gs[1, :])
+
+        if analysis_data["generators_with_blocks"] > 0:
+            coverage_pct = (
+                analysis_data["generators_with_blocks"]
+                / analysis_data["total_generators_checked"]
+            ) * 100
+            issue_rate = (
+                (
+                    analysis_data["total_issues_found"]
+                    / analysis_data["generators_with_blocks"]
+                )
+                * 100
+                if analysis_data["generators_with_blocks"] > 0
+                else 0
+            )
+
+            coverage_labels = [
+                "Generators with\nBid Blocks",
+                "Issue Rate\n(% with problems)",
+            ]
+            coverage_values = [coverage_pct, issue_rate]
+            coverage_colors = ["#4CAF50", "#FF9800"]
+
+            bars = ax_coverage.bar(
+                coverage_labels, coverage_values, color=coverage_colors
+            )
+            ax_coverage.set_title(
+                "Coverage and Issue Rate", fontweight="bold", fontsize=10
+            )
+            ax_coverage.set_ylabel("Percentage (%)", fontsize=8)
+            ax_coverage.tick_params(axis="x", labelsize=8)
+            ax_coverage.tick_params(axis="y", labelsize=8)
+
+            # Add percentage labels on bars
+            for bar, value in zip(bars, coverage_values):
+                height = bar.get_height()
+                ax_coverage.text(
+                    bar.get_x() + bar.get_width() / 2.0,
+                    height + max(coverage_values) * 0.01,
+                    f"{value:.1f}%",
+                    ha="center",
+                    va="bottom",
+                    fontweight="bold",
+                    fontsize=8,
+                )
+        else:
+            ax_coverage.text(
+                0.5,
+                0.5,
+                "No generators with bid blocks found",
+                ha="center",
+                va="center",
+                fontsize=12,
+                style="italic",
+            )
+            ax_coverage.set_title(
+                "Coverage and Issue Rate", fontweight="bold", fontsize=10
+            )
+
+        # Add summary text
+        summary_lines = []
+        summary_lines.append(
+            f"Analyzed: {analysis_data['total_generators_checked']} generators"
+        )
+        summary_lines.append(
+            f"With bid blocks: {analysis_data['generators_with_blocks']} generators"
+        )
+        summary_lines.append(
+            f"Issues found: {analysis_data['total_issues_found']} generators"
+        )
+
+        if analysis_data["total_issues_found"] > 0:
+            summary_lines.append("")  # Empty line
+            summary_lines.append("Issue types:")
+            for issue_type, count in analysis_data["issue_types"].items():
+                if issue_type == "non_monotonic_quantity":
+                    summary_lines.append(f"  • Non-monotonic quantities: {count}")
+                elif issue_type == "small_quantity_changes":
+                    summary_lines.append(f"  • Small quantity changes: {count}")
+
+        summary_text = "\n".join(summary_lines)
+
+        fig.text(
+            0.02,
+            0.02,
+            summary_text,
+            fontsize=8,
+            verticalalignment="bottom",
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="lightyellow", alpha=0.8),
+        )
+
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+    def _create_bid_block_issues_tables(self, pdf: PdfPages, analysis_data: dict):
+        """Create detailed tables showing generators with bid block issues."""
+        issues = analysis_data["issues"]
+
+        # Group issues by type
+        issues_by_type = {}
+        for issue in issues:
+            issue_type = issue["issue_type"]
+            if issue_type not in issues_by_type:
+                issues_by_type[issue_type] = []
+            issues_by_type[issue_type].append(issue)
+
+        # Create a page for each issue type
+        for issue_type, type_issues in issues_by_type.items():
+            self._create_issue_type_table(pdf, issue_type, type_issues)
+
+    def _create_issue_type_table(self, pdf: PdfPages, issue_type: str, issues: list):
+        """Create a table for a specific issue type."""
+        # Determine title and description based on issue type
+        if issue_type == "non_monotonic_quantity":
+            title = "Non-Monotonic Quantity Issues"
+            description = (
+                "Generators where bid block quantities do not increase monotonically"
+            )
+        elif issue_type == "small_quantity_changes":
+            title = "Small Quantity Change Issues"
+            description = "Generators with quantity changes less than 1% between consecutive blocks"
+        else:
+            title = f"{issue_type.replace('_', ' ').title()} Issues"
+            description = f"Generators with {issue_type.replace('_', ' ')} issues"
+
+        # Calculate how many pages we need (20 generators per page)
+        generators_per_page = 20
+        total_pages = (len(issues) + generators_per_page - 1) // generators_per_page
+
+        for page_num in range(total_pages):
+            start_idx = page_num * generators_per_page
+            end_idx = min(start_idx + generators_per_page, len(issues))
+            page_issues = issues[start_idx:end_idx]
+
+            fig = plt.figure(figsize=(11, 8.5))
+            if total_pages > 1:
+                page_title = f"{title} (Page {page_num + 1} of {total_pages})"
+                subtitle = f"Showing generators {start_idx + 1}-{end_idx} of {len(issues)} total"
+            else:
+                page_title = title
+                subtitle = f"{len(issues)} generators with issues"
+
+            fig.suptitle(f"{page_title}\n{subtitle}", fontsize=14, fontweight="bold")
+
+            # Create table data
+            table_data = []
+            if issue_type == "non_monotonic_quantity":
+                headers = [
+                    "#",
+                    "Generator",
+                    "Fuel",
+                    "Capacity",
+                    "Total Blocks",
+                    "Problem Blocks",
+                    "Severity",
+                ]
+            else:  # small_quantity_changes
+                headers = [
+                    "#",
+                    "Generator",
+                    "Fuel",
+                    "Capacity",
+                    "Problem Blocks",
+                    "Avg Change %",
+                    "Severity",
+                ]
+
+            for i, issue in enumerate(page_issues, start_idx + 1):
+                gen_name = (
+                    issue["generator_name"][:20] + "..."
+                    if len(issue["generator_name"]) > 20
+                    else issue["generator_name"]
+                )
+                fuel = (
+                    issue["fuel_type"][:10] + "..."
+                    if len(str(issue["fuel_type"])) > 10
+                    else str(issue["fuel_type"])
+                )
+                capacity = (
+                    issue["capacity"][:8] + "..."
+                    if len(str(issue["capacity"])) > 8
+                    else str(issue["capacity"])
+                )
+
+                if issue_type == "non_monotonic_quantity":
+                    row = [
+                        str(i),
+                        gen_name,
+                        fuel,
+                        capacity,
+                        str(issue["details"]["total_blocks"]),
+                        str(issue["details"]["non_monotonic_blocks"]),
+                        issue["severity"].upper(),
+                    ]
+                else:  # small_quantity_changes
+                    avg_change = issue["details"]["avg_change_pct"]
+                    row = [
+                        str(i),
+                        gen_name,
+                        fuel,
+                        capacity,
+                        str(issue["details"]["small_change_blocks"]),
+                        f"{avg_change:.2f}%",
+                        issue["severity"].upper(),
+                    ]
+
+                table_data.append(row)
+
+            # Create the table
+            ax = plt.subplot(111)
+            ax.axis("off")
+
+            if table_data:
+                table = ax.table(
+                    cellText=table_data, colLabels=headers, loc="center", cellLoc="left"
+                )
+                table.auto_set_font_size(False)
+                table.set_fontsize(7)
+                table.scale(1, 1.8)
+
+                # Style the table
+                for i in range(len(headers)):
+                    table[(0, i)].set_facecolor("#FF5722")
+                    table[(0, i)].set_text_props(weight="bold", color="white")
+
+                for i in range(1, len(table_data) + 1):
+                    for j in range(len(headers)):
+                        table[(i, j)].set_facecolor(
+                            "#ffebee" if i % 2 == 0 else "white"
+                        )
+
+                # Add description text at the bottom
+                plt.figtext(
+                    0.1, 0.02, description, fontsize=9, style="italic", wrap=True
                 )
 
             pdf.savefig(fig, bbox_inches="tight")
