@@ -11,11 +11,11 @@
 # Generators are loaded regardless of this threshold, but only included in PDF if they meet criteria
 #
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = 700  # PDF report threshold - generators included in reports if capacity OR generation >= this value
+MIN_MW_TO_BE_ANALYZED = 1000  # PDF report threshold - generators included in reports if capacity OR generation >= this value
 RUN_BID_VALIDATION = False
-USE_THIS_MARKET = "miso"  # Options: "miso", "spp", "ercot", "pjm"
-# USE_THIS_MARKET = "pjm"  # Options: "miso", "spp", "ercot", "pjm"
 # USE_THIS_MARKET = "ercot"  # Options: "miso", "spp", "ercot", "pjm"
+USE_THIS_MARKET = "pjm"  # Options: "miso", "spp", "ercot", "pjm"
+# USE_THIS_MARKET = "miso"  # Options: "miso", "spp", "ercot", "pjm"
 
 # ===============================================================
 
@@ -1418,9 +1418,14 @@ class GeneratorAnalyzer:
                 print("Comparing ResourceDB vs Supply Curves...")
                 self._compare_resourcedb_vs_supply_curves()
 
-                # Add supply curve bid block analysis
-                print("Analyzing supply curve bid blocks...")
-                self._analyze_supply_curve_bid_blocks()
+                # Add supply curve bid block analysis - ERCOT only
+                if self.config.MARKET.lower() == "ercot":
+                    print("Analyzing supply curve bid blocks (ERCOT only)...")
+                    self._analyze_supply_curve_bid_blocks()
+                else:
+                    print(
+                        f"Supply curve bid block analysis skipped for {self.config.MARKET} market"
+                    )
 
             except Exception as e:
                 print(f"Error loading ResourceDB: {e}")

@@ -303,8 +303,13 @@ class PerformanceReportGenerator:
             # Data Source Comparison (ResourceDB vs Supply Curves)
             self._create_data_source_comparison_section(pdf)
 
-            # Supply Curve Bid Block Analysis
-            self._create_bid_block_analysis_section(pdf)
+            # Supply Curve Bid Block Analysis (ERCOT only)
+            if market.lower() == "ercot":
+                self._create_bid_block_analysis_section(pdf)
+            else:
+                print(
+                    f"Supply curve bid block analysis section skipped for {market} market"
+                )
 
             # Operational Characteristics
             self._create_operational_characteristics_section(pdf, results_df)
