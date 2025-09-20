@@ -303,12 +303,15 @@ class PerformanceReportGenerator:
             # Data Source Comparison (ResourceDB vs Supply Curves)
             self._create_data_source_comparison_section(pdf)
 
-            # Supply Curve Bid Block Analysis (ERCOT only)
-            if market.lower() == "ercot":
+            # Supply Curve Bid Block Analysis (always shown when analysis was performed)
+            if (
+                hasattr(self, "bid_block_analysis_results")
+                and self.bid_block_analysis_results
+            ):
                 self._create_bid_block_analysis_section(pdf)
             else:
                 print(
-                    f"Supply curve bid block analysis section skipped for {market} market"
+                    f"Supply curve bid block analysis section skipped - analysis not performed"
                 )
 
             # Operational Characteristics
@@ -3053,7 +3056,7 @@ To enable anomaly detection:
             # Create a placeholder section indicating no data available
             fig = plt.figure(figsize=(11, 8.5))
             fig.suptitle(
-                "Supply Curve Bid Block Analysis",
+                "Supply Curve Bid Block Analysis - No Data Available",
                 fontsize=16,
                 fontweight="bold",
             )
@@ -3091,9 +3094,10 @@ To enable anomaly detection:
 
     def _create_bid_block_overview(self, pdf: PdfPages, analysis_data):
         """Create overview page for bid block analysis."""
+        market_name = analysis_data.get("market", "UNKNOWN")
         fig = plt.figure(figsize=(11, 8.5))
         fig.suptitle(
-            "Supply Curve Bid Block Analysis - Overview",
+            f"Supply Curve Bid Block Analysis - {market_name} Market Overview",
             fontsize=16,
             fontweight="bold",
         )
@@ -3102,11 +3106,12 @@ To enable anomaly detection:
             # No issues found - create summary page
             ax = plt.subplot(111)
 
-            summary_text = f"""Supply Curve Bid Block Analysis Summary:
+            summary_text = f"""Supply Curve Bid Block Analysis Summary ({market_name} Market):
 
 ✅ No bid block issues detected!
 
 Analysis Results:
+• Market: {market_name}
 • Total generators checked: {analysis_data['total_generators_checked']}
 • Generators with bid blocks: {analysis_data['generators_with_blocks']}
 • Issues found: {analysis_data['total_issues_found']}

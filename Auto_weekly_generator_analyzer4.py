@@ -11,10 +11,10 @@
 # Generators are loaded regardless of this threshold, but only included in PDF if they meet criteria
 #
 # FULL_PRODUCTION_RUN = True
-MIN_MW_TO_BE_ANALYZED = 1000  # PDF report threshold - generators included in reports if capacity OR generation >= this value
+MIN_MW_TO_BE_ANALYZED = 600  # PDF report threshold - generators included in reports if capacity OR generation >= this value
 RUN_BID_VALIDATION = False
-# USE_THIS_MARKET = "ercot"  # Options: "miso", "spp", "ercot", "pjm"
-USE_THIS_MARKET = "pjm"  # Options: "miso", "spp", "ercot", "pjm"
+USE_THIS_MARKET = "ercot"  # Options: "miso", "spp", "ercot", "pjm"
+# USE_THIS_MARKET = "pjm"  # Options: "miso", "spp", "ercot", "pjm"
 # USE_THIS_MARKET = "miso"  # Options: "miso", "spp", "ercot", "pjm"
 
 # ===============================================================
@@ -1418,14 +1418,9 @@ class GeneratorAnalyzer:
                 print("Comparing ResourceDB vs Supply Curves...")
                 self._compare_resourcedb_vs_supply_curves()
 
-                # Add supply curve bid block analysis - ERCOT only
-                if self.config.MARKET.lower() == "ercot":
-                    print("Analyzing supply curve bid blocks (ERCOT only)...")
-                    self._analyze_supply_curve_bid_blocks()
-                else:
-                    print(
-                        f"Supply curve bid block analysis skipped for {self.config.MARKET} market"
-                    )
+                # Add supply curve bid block analysis - for all markets with blocks
+                print("Checking for supply curve bid blocks...")
+                self._analyze_supply_curve_bid_blocks()
 
             except Exception as e:
                 print(f"Error loading ResourceDB: {e}")
@@ -1677,7 +1672,9 @@ class GeneratorAnalyzer:
             print("Supply curves data not available - skipping bid block analysis")
             return {}
 
-        print("\n🔍 Analyzing supply curve bid blocks for issues...")
+        print(
+            f"\n🔍 Analyzing supply curve bid blocks for {self.config.MARKET.upper()} market..."
+        )
 
         issues = []
         total_generators_checked = 0
@@ -1693,17 +1690,28 @@ class GeneratorAnalyzer:
             # Look for bid blocks in the generator data
             bid_blocks = None
             if isinstance(generator_data, dict):
-                # Check various possible field names for bid blocks
-                for field_name in [
-                    "blocks",
-                    "bid_blocks",
-                    "supply_blocks",
-                    "offers",
-                    "bids",
-                ]:
-                    if field_name in generator_data and generator_data[field_name]:
-                        bid_blocks = generator_data[field_name]
-                        break
+                # First, check if offer_curve itself is a list of blocks
+                if "offer_curve" in generator_data:
+                    offer_curve = generator_data["offer_curve"]
+                    if isinstance(offer_curve, list) and len(offer_curve) > 1:
+                        # Direct offer_curve as list of blocks
+                        bid_blocks = offer_curve
+                    elif isinstance(offer_curve, dict) and "blocks" in offer_curve:
+                        # offer_curve contains blocks field
+                        bid_blocks = offer_curve["blocks"]
+
+                # Check various possible field names for bid blocks at top level
+                if not bid_blocks:
+                    for field_name in [
+                        "blocks",
+                        "bid_blocks",
+                        "supply_blocks",
+                        "offers",
+                        "bids",
+                    ]:
+                        if field_name in generator_data and generator_data[field_name]:
+                            bid_blocks = generator_data[field_name]
+                            break
 
                 # Also check nested structures
                 if not bid_blocks:
@@ -1746,6 +1754,8 @@ class GeneratorAnalyzer:
 
         # Store results for PDF reporting
         bid_block_analysis = {
+            "market": self.config.MARKET.upper(),
+            "analysis_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "total_generators_checked": total_generators_checked,
             "generators_with_blocks": generators_with_blocks,
             "total_issues_found": len(issues),
@@ -1753,6 +1763,7 @@ class GeneratorAnalyzer:
             "issue_types": self._categorize_bid_block_issues(issues),
         }
 
+        print(f"  • Market: {self.config.MARKET.upper()}")
         print(f"  • Total generators checked: {total_generators_checked}")
         print(f"  • Generators with bid blocks: {generators_with_blocks}")
         print(f"  • Issues found: {len(issues)}")
@@ -1761,6 +1772,13 @@ class GeneratorAnalyzer:
             issue_types = bid_block_analysis["issue_types"]
             for issue_type, count in issue_types.items():
                 print(f"    - {issue_type}: {count} generators")
+        else:
+            if generators_with_blocks == 0:
+                print(
+                    f"  ℹ️  No generators found with multiple bid blocks in {self.config.MARKET.upper()} supply curves"
+                )
+            else:
+                print(f"  ✅ All generators with bid blocks passed validation checks")
 
         self.bid_block_analysis_results = bid_block_analysis
         return bid_block_analysis
@@ -3831,8 +3849,8 @@ class GeneratorAnalyzer:
                 )
                 # Fallback to original method
                 # MS changes num of jobs to 1:
-                # results = Parallel(n_jobs=self.config.N_JOBS)(
-                results = Parallel(n_jobs=1)(
+                results = Parallel(n_jobs=self.config.N_JOBS)(
+                    # results = Parallel(n_jobs=1)(
                     delayed(self.analyze_single_generator)(i)
                     for i in batch_generator_indices
                 )
